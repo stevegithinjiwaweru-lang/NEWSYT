@@ -2,6 +2,7 @@ import express from "express";
 import { prisma } from "../prisma";
 import authMiddleware from "../middlewares/auth"; // ✅ FIXED (default import)
 import { ConnectorType } from "@prisma/client";
+import { sanitizeMerchant } from "../modules/external/merchants/integration";
 
 const router = express.Router();
 
@@ -23,7 +24,7 @@ router.get("/", requireAuth, async (_req, res) => {
 
     return res.json({
       ok: true,
-      merchants,
+      merchants: merchants.map(sanitizeMerchant),
     });
   } catch (error) {
     console.error("Get merchants error:", error);
@@ -59,7 +60,7 @@ router.post("/", requireAuth, async (req, res) => {
 
     return res.status(201).json({
       ok: true,
-      merchant,
+      merchant: sanitizeMerchant(merchant),
     });
   } catch (error) {
     console.error("Create merchant error:", error);
@@ -89,14 +90,18 @@ router.patch("/:id", requireAuth, async (req, res) => {
       });
     }
 
+    // Defensive: never let the generic dashboard PATCH route overwrite
+    // integration secrets — those rotate via the admin endpoints.
+    const { config: _config, ...patchableBody } = req.body ?? {};
+
     const merchant = await prisma.merchant.update({
       where: { id },
-      data: req.body,
+      data: patchableBody,
     });
 
     return res.json({
       ok: true,
-      merchant,
+      merchant: sanitizeMerchant(merchant),
     });
   } catch (error) {
     console.error("Update merchant error:", error);
@@ -136,7 +141,7 @@ router.post("/:id/sync", requireAuth, async (req, res) => {
     return res.json({
       ok: true,
       message: "Merchant synced successfully",
-      merchant,
+      merchant: sanitizeMerchant(merchant),
     });
   } catch (error) {
     console.error("Sync merchant error:", error);

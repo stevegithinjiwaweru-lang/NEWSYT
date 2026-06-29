@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from "express";
-import jwt from "jsonwebtoken";
+import { verifyAccessToken } from "../utils/jwt";
 
 export interface AuthRequest extends Request {
   user?: {
@@ -26,14 +26,11 @@ const authMiddleware = (
       return res.status(401).json({ error: "Invalid token format" });
     }
 
-    const decoded = jwt.verify(
-      token,
-      process.env.JWT_ACCESS_SECRET || "test_access_secret"
-    ) as any;
+    const decoded = verifyAccessToken(token);
 
     req.user = {
       id: decoded.sub,
-      role: decoded.role,
+      role: decoded.role ?? "",
     };
 
     next();

@@ -7,8 +7,13 @@ import path from "path";
 import fs from "fs";
 import { Queue } from "bullmq";
 import IORedis from "ioredis";
-import { OrderStatus, PaymentType, RiderStatus } from "@prisma/client";
+import { OrderStatus, PaymentMethod, PaymentStatus, PaymentType, RiderStatus } from "@prisma/client";
+import { z } from "zod";
 import { io } from "../app";
+import {
+  publishOrderStatusEvent,
+  publishPaymentCollectedEvent,
+} from "../modules/external/webhooks/dispatchEvents";
 
 const router = express.Router();
 const requireAuth = authMiddleware;
@@ -209,6 +214,8 @@ router.patch("/:id/assign", requireAuth, async (req, res) => {
       order,
     });
 
+    await publishOrderStatusEvent(order);
+
     return res.json({ ok: true, order });
   } catch (error) {
     console.error("Assign rider error:", error);
@@ -275,6 +282,8 @@ router.patch(
         });
       }
 
+      await publishOrderStatusEvent(order);
+
       return res.json({ ok: true, order });
     } catch (error) {
       console.error("Status update error:", error);
@@ -334,10 +343,82 @@ router.post(
         podUrl,
       });
 
+      await publishOrderStatusEvent(order);
+
       return res.json({ ok: true, order, podUrl });
     } catch (error) {
       console.error("POD upload error:", error);
       return res.status(500).json({ ok: false, error: "Failed to upload POD" });
+    }
+  }
+);
+
+const PaymentSchema = z.object({
+  method: z.enum(["CASH", "MPESA", "CARD"]),
+  amount: z.number().positive(),
+  reference: z.string().max(200).optional(),
+});
+
+router.post(
+  "/:id/payment",
+  requireAuth,
+  riderOnly,
+  async (req: AuthRequest, res) => {
+    try {
+      const { id } = req.params;
+      const parsed = PaymentSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(422).json({
+          ok: false,
+          error: "Validation failed",
+          details: parsed.error.flatten(),
+        });
+      }
+      const { method, amount, reference } = parsed.data;
+
+      const riderId = await getRiderIdForUser(req.user!.id);
+      const existing = await prisma.order.findUnique({ where: { id } });
+
+      if (!existing) {
+        return res.status(404).json({ ok: false, error: "Order not found" });
+      }
+      if (existing.riderId !== riderId) {
+        return res.status(403).json({ ok: false, error: "Not your order" });
+      }
+      if (existing.paymentType !== PaymentType.COD) {
+        return res.status(409).json({
+          ok: false,
+          error: "Order is not COD; payment is not collected on delivery",
+        });
+      }
+
+      if (existing.paymentStatus === PaymentStatus.COLLECTED) {
+        // Idempotent return — rider double-tap protection.
+        return res.json({ ok: true, order: existing, alreadyCollected: true });
+      }
+
+      const order = await prisma.order.update({
+        where: { id },
+        data: {
+          paymentStatus: PaymentStatus.COLLECTED,
+          paymentMethod: method as PaymentMethod,
+          amountCollected: amount,
+          paymentRef: reference ?? null,
+          paidAt: new Date(),
+        },
+        include: { merchant: true, rider: true },
+      });
+
+      await publishPaymentCollectedEvent(order, {
+        method: method as PaymentMethod,
+        amount,
+        reference: reference ?? null,
+      });
+
+      return res.json({ ok: true, order });
+    } catch (error) {
+      console.error("POD payment error:", error);
+      return res.status(500).json({ ok: false, error: "Failed to record payment" });
     }
   }
 );

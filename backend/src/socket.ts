@@ -1,5 +1,7 @@
 import { io } from "./app";
 import { prisma } from "./prisma";
+import { publishOrderStatusEvent } from "./modules/external/webhooks/dispatchEvents";
+import { publishLocation } from "./modules/external/location/location.cache";
 
 interface RiderLocation {
   riderId: string;
@@ -67,6 +69,7 @@ io.on("connection", (socket) => {
       });
 
       if (rider) {
+        const now = new Date();
         await prisma.rider.update({
           where: {
             id: data.riderId,
@@ -74,8 +77,17 @@ io.on("connection", (socket) => {
           data: {
             lastLat: data.lat,
             lastLng: data.lng,
-            lastSeenAt: new Date(),
+            lastSeenAt: now,
           },
+        });
+
+        await publishLocation({
+          riderId: data.riderId,
+          lat: data.lat,
+          lng: data.lng,
+          bearing: data.bearing ?? null,
+          speed: data.speed ?? null,
+          lastSeenAt: now.toISOString(),
         });
       }
 
@@ -118,7 +130,7 @@ io.on("connection", (socket) => {
           return;
         }
 
-        await prisma.order.update({
+        const updated = await prisma.order.update({
           where: {
             id: data.orderId,
           },
@@ -126,6 +138,7 @@ io.on("connection", (socket) => {
             riderId: data.riderId,
             status: "ASSIGNED",
           },
+          include: { rider: true },
         });
 
         io.to(RIDER_ROOM(data.riderId)).emit(
@@ -140,6 +153,8 @@ io.on("connection", (socket) => {
           "order:assigned",
           data
         );
+
+        await publishOrderStatusEvent(updated);
 
         console.log("📦 Order assigned:", data);
       } catch (error) {
@@ -162,19 +177,22 @@ io.on("connection", (socket) => {
           return;
         }
 
-        await prisma.order.update({
+        const updated = await prisma.order.update({
           where: {
             id: data.orderId,
           },
           data: {
             status: data.status as any,
           },
+          include: { rider: true },
         });
 
         io.to(DISPATCH_ROOM).emit(
           "order:tracking:update",
           data
         );
+
+        await publishOrderStatusEvent(updated);
 
         console.log("📊 Order status:", data);
       } catch (error) {

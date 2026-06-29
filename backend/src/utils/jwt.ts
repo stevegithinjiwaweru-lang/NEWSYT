@@ -1,10 +1,5 @@
 import jwt, { SignOptions } from "jsonwebtoken";
-
-const ACCESS_SECRET =
-  process.env.JWT_ACCESS_SECRET || "test_access_secret";
-
-const REFRESH_SECRET =
-  process.env.JWT_REFRESH_SECRET || "test_refresh_secret";
+import { env } from "../config/env";
 
 export interface JwtPayload {
   sub: string;
@@ -13,34 +8,22 @@ export interface JwtPayload {
   exp?: number;
 }
 
-// ------------------
-// ACCESS TOKEN
-// ------------------
 export const signAccessToken = (payload: object): string => {
-  return jwt.sign(payload, ACCESS_SECRET, {
-    expiresIn: (process.env.JWT_ACCESS_EXPIRES_IN as any) || "15m",
+  return jwt.sign(payload, env.JWT_ACCESS_SECRET, {
+    expiresIn: env.JWT_ACCESS_EXPIRES_IN as any,
   } as SignOptions);
 };
 
-// ------------------
-// REFRESH TOKEN
-// ------------------
 export const signRefreshToken = (payload: object): string => {
-  return jwt.sign(payload, REFRESH_SECRET, {
-    expiresIn: (process.env.JWT_REFRESH_EXPIRES_IN as any) || "7d",
+  return jwt.sign(payload, env.JWT_REFRESH_SECRET, {
+    expiresIn: env.JWT_REFRESH_EXPIRES_IN as any,
   } as SignOptions);
 };
 
-// ------------------
-// VERIFY ACCESS
-// ------------------
 export const verifyAccessToken = (token: string): JwtPayload => {
-  return jwt.verify(token, ACCESS_SECRET) as JwtPayload;
+  return jwt.verify(token, env.JWT_ACCESS_SECRET) as JwtPayload;
 };
 
-// ------------------
-// VERIFY REFRESH
-// ------------------
 export const verifyRefreshToken = (token: string): JwtPayload => {
-  return jwt.verify(token, REFRESH_SECRET) as JwtPayload;
+  return jwt.verify(token, env.JWT_REFRESH_SECRET) as JwtPayload;
 };

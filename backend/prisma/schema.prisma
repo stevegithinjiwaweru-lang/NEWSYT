@@ -39,36 +39,55 @@ model Rider {
 }
 
 model Merchant {
-  id         String         @id @default(cuid())
-  name       String
-  connector  ConnectorType
-  status     MerchantStatus @default(CONNECTED)
-  config     Json?
-  lastSyncAt DateTime?
-  createdAt  DateTime       @default(now())
-  updatedAt  DateTime       @updatedAt
-  orders     Order[]
+  id               String            @id @default(cuid())
+  name             String
+  connector        ConnectorType
+  status           MerchantStatus    @default(CONNECTED)
+  config           Json?
+  lastSyncAt       DateTime?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  orders           Order[]
+  idempotencyKeys  IdempotencyKey[]
+  outboundWebhooks OutboundWebhook[]
 }
 
 model Order {
-  id           String      @id @default(cuid())
-  externalId   String?     @unique
-  merchantId   String
-  customerName String
-  phone        String
-  address      String
-  lat          Float?
-  lng          Float?
-  amount       Float
-  paymentType  PaymentType @default(COD)
-  status       OrderStatus @default(NEW)
-  riderId      String?
-  attemptCount Int         @default(0)
-  podUrl       String?
-  createdAt    DateTime    @default(now())
-  updatedAt    DateTime    @updatedAt
-  merchant     Merchant    @relation(fields: [merchantId], references: [id], onDelete: Cascade)
-  rider        Rider?      @relation(fields: [riderId], references: [id])
+  id              String         @id @default(cuid())
+  externalId      String?
+  merchantId      String
+  customerName    String
+  phone           String
+  address         String
+  lat             Float?
+  lng             Float?
+  pickupAddress   String?
+  pickupLat       Float?
+  pickupLng       Float?
+  packageNotes    String?
+  etaMinutes      Int?
+  amount          Float
+  paymentType     PaymentType    @default(COD)
+  paymentStatus   PaymentStatus  @default(NOT_REQUIRED)
+  paymentMethod   PaymentMethod?
+  amountCollected Float?
+  paymentRef      String?
+  paidAt          DateTime?
+  status          OrderStatus    @default(NEW)
+  riderId         String?
+  attemptCount    Int            @default(0)
+  podUrl          String?
+  cancelledAt     DateTime?
+  cancelReason    String?
+  cancelFee       Float?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  merchant        Merchant       @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  rider           Rider?         @relation(fields: [riderId], references: [id])
+
+  @@unique([merchantId, externalId])
+  @@index([status])
+  @@index([riderId])
 }
 
 model RefreshToken {
@@ -80,17 +99,54 @@ model RefreshToken {
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
-model Dispatch {
-  id                String   @id @default(cuid())
-  dispatchId        String   @unique
-  orderReference    String
-  status            String
-  riderId           String?
-  estimatedPickup   DateTime?
-  estimatedDelivery DateTime?
-  metadata          Json?
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+model IdempotencyKey {
+  id           String   @id @default(cuid())
+  merchantId   String
+  key          String
+  requestHash  String
+  statusCode   Int
+  responseBody Json
+  createdAt    DateTime @default(now())
+  merchant     Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@unique([merchantId, key])
+  @@index([createdAt])
+}
+
+model Zone {
+  id              String   @id @default(cuid())
+  name            String
+  polygonGeoJson  Json
+  baseFee         Float
+  perKmFee        Float?
+  currency        String   @default("KES")
+  operatingHours  Json
+  dailyCutoff     String?
+  active          Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([active])
+  @@index([name])
+}
+
+model OutboundWebhook {
+  id          String                @id @default(cuid())
+  merchantId  String
+  eventId     String                @unique
+  event       String
+  payload     Json
+  targetUrl   String
+  status      WebhookDeliveryStatus @default(PENDING)
+  attempts    Int                   @default(0)
+  lastError   String?
+  deliveredAt DateTime?
+  createdAt   DateTime              @default(now())
+  updatedAt   DateTime              @updatedAt
+  merchant    Merchant              @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@index([merchantId, createdAt])
+  @@index([status, attempts])
 }
 
 enum UserRole {
@@ -123,6 +179,19 @@ enum PaymentType {
   PREPAID
 }
 
+enum PaymentStatus {
+  PENDING
+  COLLECTED
+  FAILED
+  NOT_REQUIRED
+}
+
+enum PaymentMethod {
+  CASH
+  MPESA
+  CARD
+}
+
 enum OrderStatus {
   NEW
   ASSIGNED
@@ -131,4 +200,11 @@ enum OrderStatus {
   DELIVERED
   FAILED
   RETURNED
+  CANCELLED
+}
+
+enum WebhookDeliveryStatus {
+  PENDING
+  SUCCESS
+  FAILED
 }

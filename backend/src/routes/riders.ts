@@ -3,6 +3,7 @@ import { prisma } from "../prisma";
 import authMiddleware, { AuthRequest } from "../middlewares/auth";
 import { io } from "../app";
 import { OrderStatus, RiderStatus } from "@prisma/client";
+import { publishLocation } from "../modules/external/location/location.cache";
 
 const router = express.Router();
 const requireAuth = authMiddleware;
@@ -189,6 +190,17 @@ router.post("/:id/location", requireAuth, async (req: AuthRequest, res) => {
     };
 
     io.to("dashboard").emit("rider:location:update", payload);
+
+    if (updated.lastLat !== null && updated.lastLng !== null && updated.lastSeenAt) {
+      await publishLocation({
+        riderId: updated.id,
+        lat: updated.lastLat,
+        lng: updated.lastLng,
+        bearing: bearing ?? null,
+        speed: speed ?? null,
+        lastSeenAt: updated.lastSeenAt.toISOString(),
+      });
+    }
 
     const activeOrders = await prisma.order.findMany({
       where: {
