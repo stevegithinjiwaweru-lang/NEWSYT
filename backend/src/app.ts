@@ -10,6 +10,7 @@ import authRoutes from "./routes/auth";
 import ordersRoutes from "./routes/orders";
 import ridersRoutes from "./routes/riders";
 import merchantsRoutes from "./routes/merchants";
+import dispatchRoutes from "./routes/dispatches";
 
 export const app = express();
 
@@ -39,6 +40,7 @@ app.use("/auth", authRoutes);
 app.use("/orders", ordersRoutes);
 app.use("/riders", ridersRoutes);
 app.use("/merchants", merchantsRoutes);
+app.use("/v1/dispatches", dispatchRoutes);
 
 // =====================
 // HEALTH CHECK
@@ -64,4 +66,19 @@ export const io = new IOServer(httpServer, {
   cors: {
     origin: "*",
   },
+});
+
+// =====================
+// GLOBAL ERROR HANDLER (captures multer and other route errors)
+// =====================
+// Must be registered after routes
+app.use((err: any, _req: any, res: any, _next: any) => {
+  console.error("Unhandled error:", err && err.message ? err.message : err);
+
+  // Multer file filter or validation errors should return 400
+  if (err && err.message) {
+    return res.status(400).json({ ok: false, error: err.message });
+  }
+
+  return res.status(500).json({ ok: false, error: "Internal server error" });
 });
