@@ -7,7 +7,7 @@ import path from "path";
 import fs from "fs";
 import { Queue } from "bullmq";
 import IORedis from "ioredis";
-import { OrderStatus, PaymentType, RiderStatus } from "@prisma/client";
+import { OrderStatus, PaymentType, RiderStatus, ConnectorType } from "@prisma/client";
 import { io } from "../app";
 
 const router = express.Router();
@@ -62,7 +62,7 @@ const connection = new IORedis(
   }
 );
 
-connection.on("connect", () => console.log("✅ Redis connected"));
+connection.on("connect", () => console.log("✅ Redis connected for CSV jobs"));
 connection.on("error", (err) =>
   console.error("❌ Redis error:", err.message)
 );
@@ -74,6 +74,20 @@ async function getRiderIdForUser(userId: string) {
   return rider?.id ?? null;
 }
 
+// =====================
+// HELPER: Check if merchant can have orders assigned (not CSV-synced Naivas/Carrefour)
+// =====================
+function canAssignOrdersForMerchant(merchant: any): boolean {
+  const restrictedNames = ["naivas", "carrefour"];
+  const isRestricted = restrictedNames.some((name) =>
+    (merchant.name || "").toLowerCase().includes(name)
+  );
+  return !isRestricted || merchant.connector !== ConnectorType.CSV;
+}
+
+// =====================
+// GET ALL ORDERS
+// =====================
 router.get("/", requireAuth, async (req, res) => {
   try {
     const status = req.query.status as OrderStatus | undefined;
@@ -91,6 +105,9 @@ router.get("/", requireAuth, async (req, res) => {
   }
 });
 
+// =====================
+// GET RIDER'S ORDERS
+// =====================
 router.get("/mine", requireAuth, riderOnly, async (req: AuthRequest, res) => {
   try {
     const riderId = await getRiderIdForUser(req.user!.id);
@@ -112,6 +129,9 @@ router.get("/mine", requireAuth, riderOnly, async (req: AuthRequest, res) => {
   }
 });
 
+// =====================
+// GET SINGLE ORDER
+// =====================
 router.get("/:id", requireAuth, async (req, res) => {
   try {
     const order = await prisma.order.findUnique({
@@ -130,45 +150,63 @@ router.get("/:id", requireAuth, async (req, res) => {
   }
 });
 
+// =====================
+// CREATE ORDER (Manual creation - requires existing merchant)
+// =====================
 router.post("/", requireAuth, async (req, res) => {
   try {
     const { merchantId, customerName, phone, address, amount, paymentType } =
       req.body;
 
-    if (!merchantId || !customerName || !phone || !address) {
+    // Validation
+    if (!merchantId || !customerName || !phone || !address || !amount) {
       return res.status(400).json({
         ok: false,
-        error: "merchantId, customerName, phone, address required",
+        error: "Missing required fields: merchantId, customerName, phone, address, amount",
       });
     }
 
+    // Verify merchant exists
     const merchant = await prisma.merchant.findUnique({
       where: { id: merchantId },
     });
 
     if (!merchant) {
-      return res.status(404).json({ ok: false, error: "Merchant not found" });
+      return res.status(404).json({
+        ok: false,
+        error: `Merchant with ID '${merchantId}' not found. Please create the merchant first on the Merchants page.`,
+      });
     }
 
+    // Create order
     const order = await prisma.order.create({
       data: {
         merchantId,
-        customerName,
-        phone,
-        address,
-        amount: Number(amount || 0),
+        customerName: customerName.trim(),
+        phone: phone.trim(),
+        address: address.trim(),
+        amount: Number(amount),
         paymentType: paymentType || PaymentType.COD,
         status: OrderStatus.NEW,
       },
+      include: { merchant: true },
     });
 
+    console.log(`✅ Manual order created: ${order.id} for merchant ${merchant.name}`);
+
     return res.status(201).json({ ok: true, order });
-  } catch (error) {
+  } catch (error: any) {
     console.error("Create order error:", error);
-    return res.status(500).json({ ok: false, error: "Failed to create order" });
+    return res.status(500).json({
+      ok: false,
+      error: error.message || "Failed to create order",
+    });
   }
 });
 
+// =====================
+// ASSIGN RIDER TO ORDER
+// =====================
 router.patch("/:id/assign", requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
@@ -178,12 +216,32 @@ router.patch("/:id/assign", requireAuth, async (req, res) => {
       return res.status(400).json({ ok: false, error: "riderId required" });
     }
 
+    // Get order with merchant details
+    const order = await prisma.order.findUnique({
+      where: { id },
+      include: { merchant: true },
+    });
+
+    if (!order) {
+      return res.status(404).json({ ok: false, error: "Order not found" });
+    }
+
+    // CHECK: Cannot assign orders from restricted merchants (CSV-synced Naivas/Carrefour)
+    if (!canAssignOrdersForMerchant(order.merchant)) {
+      return res.status(403).json({
+        ok: false,
+        error: `Orders from '${order.merchant.name}' are managed by their own system (${order.merchant.connector}). Manual assignment is not allowed.`,
+      });
+    }
+
+    // Verify rider exists
     const rider = await prisma.rider.findUnique({ where: { id: riderId } });
     if (!rider) {
       return res.status(404).json({ ok: false, error: "Rider not found" });
     }
 
-    const order = await prisma.order.update({
+    // Update order with rider assignment
+    const updatedOrder = await prisma.order.update({
       where: { id },
       data: {
         riderId,
@@ -192,30 +250,37 @@ router.patch("/:id/assign", requireAuth, async (req, res) => {
       include: { merchant: true, rider: true },
     });
 
+    // Update rider status to BUSY
     await prisma.rider.update({
       where: { id: riderId },
       data: { status: RiderStatus.BUSY },
     });
 
+    // Real-time notifications
     io.to(`rider:${riderId}`).emit("order:assigned", {
-      orderId: order.id,
-      order,
+      orderId: updatedOrder.id,
+      order: updatedOrder,
       message: "New delivery assigned",
     });
 
     io.to("dashboard").emit("order:assigned", {
-      orderId: order.id,
+      orderId: updatedOrder.id,
       riderId,
-      order,
+      order: updatedOrder,
     });
 
-    return res.json({ ok: true, order });
+    console.log(`✅ Order ${id} assigned to rider ${rider.name}`);
+
+    return res.json({ ok: true, order: updatedOrder });
   } catch (error) {
     console.error("Assign rider error:", error);
     return res.status(500).json({ ok: false, error: "Failed to assign rider" });
   }
 });
 
+// =====================
+// UPDATE ORDER STATUS (Rider only)
+// =====================
 router.patch(
   "/:id/status",
   requireAuth,
@@ -247,6 +312,7 @@ router.patch(
         include: { merchant: true, rider: true },
       });
 
+      // Update rider status based on order status
       if (status === OrderStatus.DELIVERED && riderId) {
         await prisma.rider.update({
           where: { id: riderId },
@@ -262,6 +328,7 @@ router.patch(
         });
       }
 
+      // Broadcast status update
       io.to("dashboard").emit("order:tracking:update", {
         orderId: order.id,
         status: order.status,
@@ -285,6 +352,9 @@ router.patch(
   }
 );
 
+// =====================
+// UPLOAD PROOF OF DELIVERY
+// =====================
 router.post(
   "/:id/pod",
   requireAuth,
@@ -334,6 +404,8 @@ router.post(
         podUrl,
       });
 
+      console.log(`✅ POD uploaded for order ${id}`);
+
       return res.json({ ok: true, order, podUrl });
     } catch (error) {
       console.error("POD upload error:", error);
@@ -342,6 +414,9 @@ router.post(
   }
 );
 
+// =====================
+// BULK CSV UPLOAD (requires merchantId in request body)
+// =====================
 router.post(
   "/bulk-csv",
   requireAuth,
@@ -349,26 +424,57 @@ router.post(
   async (req, res) => {
     try {
       if (!req.file) {
-        return res.status(400).json({ ok: false, error: "file required" });
+        return res.status(400).json({ ok: false, error: "CSV file is required" });
       }
 
       const { merchantId } = req.body;
 
+      if (!merchantId) {
+        return res.status(400).json({
+          ok: false,
+          error: "merchantId is required in form data",
+        });
+      }
+
+      // Verify merchant exists
+      const merchant = await prisma.merchant.findUnique({
+        where: { id: merchantId },
+      });
+
+      if (!merchant) {
+        fs.unlink(req.file.path, () => {}); // Clean up uploaded file
+        return res.status(404).json({
+          ok: false,
+          error: `Merchant with ID '${merchantId}' not found`,
+        });
+      }
+
+      // Queue CSV processing job
       await csvQueue.add("process", {
         filePath: req.file.path,
         merchantId,
+        merchantName: merchant.name,
+        fileName: req.file.originalname,
       });
+
+      console.log(
+        `📁 CSV queued for processing: ${req.file.originalname} -> ${merchant.name}`
+      );
 
       return res.json({
         ok: true,
         file: req.file.filename,
-        message: "CSV uploaded and queued for processing",
+        message: `CSV '${req.file.originalname}' uploaded successfully and queued for processing`,
       });
-    } catch (error) {
+    } catch (error: any) {
+      if (req.file) {
+        fs.unlink(req.file.path, () => {});
+      }
       console.error("CSV upload error:", error);
-      return res
-        .status(500)
-        .json({ ok: false, error: "Failed to queue CSV import" });
+      return res.status(500).json({
+        ok: false,
+        error: error.message || "Failed to upload CSV",
+      });
     }
   }
 );

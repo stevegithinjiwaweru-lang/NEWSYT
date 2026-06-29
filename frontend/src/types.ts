@@ -6,32 +6,34 @@ export type User = {
   role: Role;
 };
 
-export type MerchantConnector = "csv" | "api" | "app";
-export type MerchantStatus = "connected" | "disconnected";
+export type MerchantConnector = "CSV" | "API" | "APP";
+export type MerchantStatus = "CONNECTED" | "DISCONNECTED";
 
 export type Merchant = {
   id: string;
   name: string;
   connector: MerchantConnector;
   status: MerchantStatus;
-  lastSync?: string;
+  lastSyncAt?: string;
+  createdAt?: string;
+  updatedAt?: string;
 };
 
 export type OrderStatus =
-  | "new"
-  | "assigned"
-  | "picked_up"
-  | "in_transit"
-  | "delivered"
-  | "failed"
-  | "returned";
+  | "NEW"
+  | "ASSIGNED"
+  | "PICKED_UP"
+  | "IN_TRANSIT"
+  | "DELIVERED"
+  | "FAILED"
+  | "RETURNED";
 
-export type PaymentType = "COD" | "Prepaid";
+export type PaymentType = "COD" | "PREPAID";
 
 export type Order = {
   id: string;
   merchantId: string;
-  merchantName: string;
+  merchant?: Merchant;
   customerName: string;
   phone: string;
   address: string;
@@ -42,14 +44,15 @@ export type Order = {
   status: OrderStatus;
   riderId?: string | null;
   createdAt: string;
+  updatedAt?: string;
 };
 
 export type RiderStatus =
-  | "available"
-  | "busy"
-  | "offline"
-  | "suspended"
-  | "in_delivery";
+  | "AVAILABLE"
+  | "BUSY"
+  | "OFFLINE"
+  | "SUSPENDED"
+  | "IN_DELIVERY";
 
 export type RiderLocation = {
   lat: number;
@@ -66,4 +69,5 @@ export type Rider = {
   branch?: string;
   status: RiderStatus;
   lastLocation?: RiderLocation;
+  userId?: string;
 };
