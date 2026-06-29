@@ -1,0 +1,121 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String         @id @default(cuid())
+  name          String
+  phone         String         @unique
+  email         String?        @unique
+  passwordHash  String
+  role          UserRole       @default(DISPATCHER)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  refreshTokens RefreshToken[]
+  rider         Rider?
+}
+
+model Rider {
+  id         String      @id @default(cuid())
+  name       String
+  phone      String
+  nationalId String?
+  bikeReg    String?
+  branch     String?
+  status     RiderStatus @default(AVAILABLE)
+  lastLat    Float?
+  lastLng    Float?
+  lastSeenAt DateTime?
+  userId     String?     @unique
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+  orders     Order[]
+  user       User?       @relation(fields: [userId], references: [id])
+}
+
+model Merchant {
+  id         String         @id @default(cuid())
+  name       String
+  connector  ConnectorType
+  status     MerchantStatus @default(CONNECTED)
+  config     Json?
+  lastSyncAt DateTime?
+  createdAt  DateTime       @default(now())
+  updatedAt  DateTime       @updatedAt
+  orders     Order[]
+}
+
+model Order {
+  id           String      @id @default(cuid())
+  externalId   String?     @unique
+  merchantId   String
+  customerName String
+  phone        String
+  address      String
+  lat          Float?
+  lng          Float?
+  amount       Float
+  paymentType  PaymentType @default(COD)
+  status       OrderStatus @default(NEW)
+  riderId      String?
+  attemptCount Int         @default(0)
+  podUrl       String?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  merchant     Merchant    @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  rider        Rider?      @relation(fields: [riderId], references: [id])
+}
+
+model RefreshToken {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userId    String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+enum UserRole {
+  ADMIN
+  DISPATCHER
+  RIDER
+}
+
+enum RiderStatus {
+  AVAILABLE
+  BUSY
+  OFFLINE
+  SUSPENDED
+  IN_DELIVERY
+}
+
+enum ConnectorType {
+  CSV
+  API
+  APP
+}
+
+enum MerchantStatus {
+  CONNECTED
+  DISCONNECTED
+}
+
+enum PaymentType {
+  COD
+  PREPAID
+}
+
+enum OrderStatus {
+  NEW
+  ASSIGNED
+  PICKED_UP
+  IN_TRANSIT
+  DELIVERED
+  FAILED
+  RETURNED
+}

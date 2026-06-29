@@ -1,0 +1,19 @@
+# Ignore dependencies
+node_modules/
+**/node_modules/
+
+# Environment variables
+.env
+.env.*
+
+# Build folders
+dist/
+build/
+.next/
+coverage/
+
+# Logs
+*.log
+
+# VS Code
+.vscode/

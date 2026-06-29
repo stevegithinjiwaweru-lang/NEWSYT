@@ -1,0 +1,20 @@
+{
+  "expo": {
+    "name": "Easybox Rider",
+    "slug": "easybox-riderapp",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "platforms": [
+      "android",
+      "ios",
+      "web"
+    ],
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "userInterfaceStyle": "automatic",
+    "plugins": [
+      "@react-native-community/datetimepicker"
+    ]
+  }
+}
