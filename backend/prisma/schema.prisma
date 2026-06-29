@@ -80,6 +80,19 @@ model RefreshToken {
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
+model Dispatch {
+  id                String   @id @default(cuid())
+  dispatchId        String   @unique
+  orderReference    String
+  status            String
+  riderId           String?
+  estimatedPickup   DateTime?
+  estimatedDelivery DateTime?
+  metadata          Json?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
 enum UserRole {
   ADMIN
   DISPATCHER
