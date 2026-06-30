@@ -1,168 +1,119 @@
-import express from "express";
-import { prisma } from "../prisma";
-import authMiddleware, { AuthRequest } from "../middlewares/auth";
-import { riderOnly } from "../middlewares/riderOnly";
-import multer from "multer";
+import express, { Request, Response } from "express";
+import multer, { Multer } from "multer";
 import path from "path";
 import fs from "fs";
-import { Queue } from "bullmq";
-import IORedis from "ioredis";
-import { OrderStatus, PaymentType, RiderStatus, ConnectorType } from "@prisma/client";
-import { io } from "../app";
+import { parse } from "csv-parse/sync";
+import { prisma } from "../prisma";
 
 const router = express.Router();
-const requireAuth = authMiddleware;
 
-const UPLOADS_DIR =
-  process.env.UPLOADS_DIR || path.join(process.cwd(), "uploads");
-
-if (!fs.existsSync(UPLOADS_DIR)) {
-  fs.mkdirSync(UPLOADS_DIR, { recursive: true });
-}
-
-const csvStorage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, UPLOADS_DIR),
-  filename: (_req, file, cb) =>
-    cb(null, `${Date.now()}-${file.originalname}`),
-});
-
-const imageStorage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, UPLOADS_DIR),
-  filename: (_req, file, cb) =>
-    cb(null, `pod-${Date.now()}-${file.originalname}`),
-});
+// File upload config
+const UPLOADS_DIR = process.env.UPLOADS_DIR || path.join(process.cwd(), "uploads");
 
 const csvUpload = multer({
-  storage: csvStorage,
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => cb(null, UPLOADS_DIR),
+    filename: (_req, file, cb) =>
+      cb(null, `${Date.now()}-${file.originalname}`),
+  }),
   fileFilter: (_req, file, cb) => {
-    const isCSV =
-      file.mimetype === "text/csv" ||
-      file.originalname.toLowerCase().endsWith(".csv");
-    if (!isCSV) return cb(new Error("Only CSV files allowed"));
-    cb(null, true);
+    if (file.mimetype === "text/csv" || file.originalname.endsWith(".csv")) {
+      cb(null, true);
+    } else {
+      cb(new Error("Only CSV files are allowed"));
+    }
   },
-  limits: { fileSize: 10 * 1024 * 1024 },
 });
 
 const podUpload = multer({
-  storage: imageStorage,
-  fileFilter: (_req, file, cb) => {
-    if (file.mimetype.startsWith("image/")) cb(null, true);
-    else cb(new Error("Only image files allowed"));
-  },
-  limits: { fileSize: 5 * 1024 * 1024 },
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => cb(null, UPLOADS_DIR),
+    filename: (_req, file, cb) =>
+      cb(null, `pod-${Date.now()}-${file.originalname}`),
+  }),
 });
 
-const connection = new IORedis(
-  process.env.REDIS_URL || "redis://localhost:6379",
-  {
-    maxRetriesPerRequest: null,
-    enableOfflineQueue: true,
-    lazyConnect: true,
-  }
-);
-
-connection.on("connect", () => console.log("✅ Redis connected for CSV jobs"));
-connection.on("error", (err) =>
-  console.error("❌ Redis error:", err.message)
-);
-
-const csvQueue = new Queue("csv-import", { connection });
-
-async function getRiderIdForUser(userId: string) {
-  const rider = await prisma.rider.findUnique({ where: { userId } });
-  return rider?.id ?? null;
-}
-
-// =====================
-// HELPER: Check if merchant can have orders assigned (not CSV-synced Naivas/Carrefour)
-// =====================
-function canAssignOrdersForMerchant(merchant: any): boolean {
-  const restrictedNames = ["naivas", "carrefour"];
-  const isRestricted = restrictedNames.some((name) =>
-    (merchant.name || "").toLowerCase().includes(name)
-  );
-  return !isRestricted || merchant.connector !== ConnectorType.CSV;
-}
-
-// =====================
-// GET ALL ORDERS
-// =====================
-router.get("/", requireAuth, async (req, res) => {
+/**
+ * GET /orders
+ * Fetch all orders with optional filters
+ */
+router.get("/", async (req: Request, res: Response) => {
   try {
-    const status = req.query.status as OrderStatus | undefined;
+    const { merchantId, status, riderId } = req.query;
+
+    const filters: any = {};
+    if (merchantId) filters.merchantId = merchantId as string;
+    if (status) filters.status = status as string;
+    if (riderId) filters.riderId = riderId as string;
 
     const orders = await prisma.order.findMany({
-      where: status ? { status } : {},
-      include: { merchant: true, rider: true },
-      orderBy: { createdAt: "desc" },
+      where: filters,
+      include: {
+        merchant: true,
+        rider: true,
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
     });
 
-    return res.json({ ok: true, count: orders.length, orders });
-  } catch (error) {
-    console.error("List orders error:", error);
-    return res.status(500).json({ ok: false, error: "Failed to fetch orders" });
+    res.json({ ok: true, orders });
+  } catch (err: any) {
+    console.error("Error fetching orders:", err);
+    res.status(500).json({ ok: false, error: err.message });
   }
 });
 
-// =====================
-// GET RIDER'S ORDERS
-// =====================
-router.get("/mine", requireAuth, riderOnly, async (req: AuthRequest, res) => {
+/**
+ * GET /orders/:id
+ * Fetch single order by ID
+ */
+router.get("/:id", async (req: Request, res: Response) => {
   try {
-    const riderId = await getRiderIdForUser(req.user!.id);
+    const { id } = req.params;
 
-    if (!riderId) {
-      return res.status(404).json({ ok: false, error: "Rider profile not found" });
-    }
-
-    const orders = await prisma.order.findMany({
-      where: { riderId },
-      include: { merchant: true, rider: true },
-      orderBy: { createdAt: "desc" },
-    });
-
-    return res.json({ ok: true, count: orders.length, orders });
-  } catch (error) {
-    console.error("My orders error:", error);
-    return res.status(500).json({ ok: false, error: "Failed to fetch orders" });
-  }
-});
-
-// =====================
-// GET SINGLE ORDER
-// =====================
-router.get("/:id", requireAuth, async (req, res) => {
-  try {
     const order = await prisma.order.findUnique({
-      where: { id: req.params.id },
-      include: { merchant: true, rider: true },
+      where: { id },
+      include: {
+        merchant: true,
+        rider: true,
+      },
     });
 
     if (!order) {
       return res.status(404).json({ ok: false, error: "Order not found" });
     }
 
-    return res.json({ ok: true, order });
-  } catch (error) {
-    console.error("Get order error:", error);
-    return res.status(500).json({ ok: false, error: "Failed to fetch order" });
+    res.json({ ok: true, order });
+  } catch (err: any) {
+    console.error("Error fetching order:", err);
+    res.status(500).json({ ok: false, error: err.message });
   }
 });
 
-// =====================
-// CREATE ORDER (Manual creation - requires existing merchant)
-// =====================
-router.post("/", requireAuth, async (req, res) => {
+/**
+ * POST /orders
+ * Create a new order manually
+ */
+router.post("/", async (req: Request, res: Response) => {
   try {
-    const { merchantId, customerName, phone, address, amount, paymentType } =
-      req.body;
+    const {
+      merchantId,
+      customerName,
+      phone,
+      address,
+      lat,
+      lng,
+      amount,
+      paymentType = "COD",
+    } = req.body;
 
     // Validation
     if (!merchantId || !customerName || !phone || !address || !amount) {
       return res.status(400).json({
         ok: false,
-        error: "Missing required fields: merchantId, customerName, phone, address, amount",
+        error:
+          "Missing required fields: merchantId, customerName, phone, address, amount",
       });
     }
 
@@ -172,268 +123,213 @@ router.post("/", requireAuth, async (req, res) => {
     });
 
     if (!merchant) {
-      return res.status(404).json({
-        ok: false,
-        error: `Merchant with ID '${merchantId}' not found. Please create the merchant first on the Merchants page.`,
-      });
+      return res.status(404).json({ ok: false, error: "Merchant not found" });
     }
 
-    // Create order
     const order = await prisma.order.create({
       data: {
         merchantId,
-        customerName: customerName.trim(),
-        phone: phone.trim(),
-        address: address.trim(),
-        amount: Number(amount),
-        paymentType: paymentType || PaymentType.COD,
-        status: OrderStatus.NEW,
+        customerName,
+        phone,
+        address,
+        lat: lat ? parseFloat(lat) : null,
+        lng: lng ? parseFloat(lng) : null,
+        amount: parseFloat(amount),
+        paymentType,
+        status: "NEW",
       },
-      include: { merchant: true },
+      include: {
+        merchant: true,
+        rider: true,
+      },
     });
 
-    console.log(`✅ Manual order created: ${order.id} for merchant ${merchant.name}`);
-
-    return res.status(201).json({ ok: true, order });
-  } catch (error: any) {
-    console.error("Create order error:", error);
-    return res.status(500).json({
-      ok: false,
-      error: error.message || "Failed to create order",
-    });
+    res.status(201).json({ ok: true, order });
+  } catch (err: any) {
+    console.error("Error creating order:", err);
+    res.status(500).json({ ok: false, error: err.message });
   }
 });
 
-// =====================
-// ASSIGN RIDER TO ORDER
-// =====================
-router.patch("/:id/assign", requireAuth, async (req, res) => {
+/**
+ * PUT /orders/:id
+ * Update an order
+ */
+router.put("/:id", async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const {
+      customerName,
+      phone,
+      address,
+      lat,
+      lng,
+      amount,
+      paymentType,
+      status,
+      riderId,
+    } = req.body;
+
+    const updateData: any = {};
+    if (customerName) updateData.customerName = customerName;
+    if (phone) updateData.phone = phone;
+    if (address) updateData.address = address;
+    if (lat !== undefined) updateData.lat = lat ? parseFloat(lat) : null;
+    if (lng !== undefined) updateData.lng = lng ? parseFloat(lng) : null;
+    if (amount) updateData.amount = parseFloat(amount);
+    if (paymentType) updateData.paymentType = paymentType;
+    if (status) updateData.status = status;
+    if (riderId !== undefined) updateData.riderId = riderId || null;
+
+    const order = await prisma.order.update({
+      where: { id },
+      data: updateData,
+      include: {
+        merchant: true,
+        rider: true,
+      },
+    });
+
+    res.json({ ok: true, order });
+  } catch (err: any) {
+    if (err.code === "P2025") {
+      return res.status(404).json({ ok: false, error: "Order not found" });
+    }
+    console.error("Error updating order:", err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/**
+ * DELETE /orders/:id
+ * Delete an order
+ */
+router.delete("/:id", async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    await prisma.order.delete({
+      where: { id },
+    });
+
+    res.json({ ok: true, message: "Order deleted successfully" });
+  } catch (err: any) {
+    if (err.code === "P2025") {
+      return res.status(404).json({ ok: false, error: "Order not found" });
+    }
+    console.error("Error deleting order:", err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/**
+ * POST /orders/bulk-assign
+ * Assign multiple orders to a rider
+ */
+router.post("/bulk-assign", async (req: Request, res: Response) => {
+  try {
+    const { riderId, orderIds } = req.body;
+
+    if (!riderId || !orderIds || !Array.isArray(orderIds)) {
+      return res.status(400).json({
+        ok: false,
+        error: "Missing or invalid: riderId, orderIds",
+      });
+    }
+
+    // Verify rider exists
+    const rider = await prisma.rider.findUnique({
+      where: { id: riderId },
+    });
+
+    if (!rider) {
+      return res.status(404).json({ ok: false, error: "Rider not found" });
+    }
+
+    const orders = await prisma.order.updateMany({
+      where: {
+        id: { in: orderIds },
+      },
+      data: {
+        riderId,
+        status: "ASSIGNED",
+      },
+    });
+
+    res.json({
+      ok: true,
+      message: `${orders.count} orders assigned to rider`,
+    });
+  } catch (err: any) {
+    console.error("Error bulk assigning orders:", err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/**
+ * POST /orders/:id/assign
+ * Assign a single order to a rider
+ */
+router.post("/:id/assign", async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const { riderId } = req.body;
 
     if (!riderId) {
-      return res.status(400).json({ ok: false, error: "riderId required" });
-    }
-
-    // Get order with merchant details
-    const order = await prisma.order.findUnique({
-      where: { id },
-      include: { merchant: true },
-    });
-
-    if (!order) {
-      return res.status(404).json({ ok: false, error: "Order not found" });
-    }
-
-    // CHECK: Cannot assign orders from restricted merchants (CSV-synced Naivas/Carrefour)
-    if (!canAssignOrdersForMerchant(order.merchant)) {
-      return res.status(403).json({
-        ok: false,
-        error: `Orders from '${order.merchant.name}' are managed by their own system (${order.merchant.connector}). Manual assignment is not allowed.`,
-      });
+      return res.status(400).json({ ok: false, error: "riderId is required" });
     }
 
     // Verify rider exists
-    const rider = await prisma.rider.findUnique({ where: { id: riderId } });
+    const rider = await prisma.rider.findUnique({
+      where: { id: riderId },
+    });
+
     if (!rider) {
       return res.status(404).json({ ok: false, error: "Rider not found" });
     }
 
-    // Update order with rider assignment
-    const updatedOrder = await prisma.order.update({
+    const order = await prisma.order.update({
       where: { id },
       data: {
         riderId,
-        status: OrderStatus.ASSIGNED,
+        status: "ASSIGNED",
       },
-      include: { merchant: true, rider: true },
+      include: {
+        merchant: true,
+        rider: true,
+      },
     });
 
-    // Update rider status to BUSY
-    await prisma.rider.update({
-      where: { id: riderId },
-      data: { status: RiderStatus.BUSY },
-    });
-
-    // Real-time notifications
-    io.to(`rider:${riderId}`).emit("order:assigned", {
-      orderId: updatedOrder.id,
-      order: updatedOrder,
-      message: "New delivery assigned",
-    });
-
-    io.to("dashboard").emit("order:assigned", {
-      orderId: updatedOrder.id,
-      riderId,
-      order: updatedOrder,
-    });
-
-    console.log(`✅ Order ${id} assigned to rider ${rider.name}`);
-
-    return res.json({ ok: true, order: updatedOrder });
-  } catch (error) {
-    console.error("Assign rider error:", error);
-    return res.status(500).json({ ok: false, error: "Failed to assign rider" });
+    res.json({ ok: true, order });
+  } catch (err: any) {
+    if (err.code === "P2025") {
+      return res.status(404).json({ ok: false, error: "Order not found" });
+    }
+    console.error("Error assigning order:", err);
+    res.status(500).json({ ok: false, error: err.message });
   }
 });
 
-// =====================
-// UPDATE ORDER STATUS (Rider only)
-// =====================
-router.patch(
-  "/:id/status",
-  requireAuth,
-  riderOnly,
-  async (req: AuthRequest, res) => {
-    try {
-      const { id } = req.params;
-      const { status } = req.body;
-
-      const validStatuses = Object.values(OrderStatus);
-      if (!status || !validStatuses.includes(status)) {
-        return res.status(400).json({ ok: false, error: "Invalid status" });
-      }
-
-      const riderId = await getRiderIdForUser(req.user!.id);
-      const existing = await prisma.order.findUnique({ where: { id } });
-
-      if (!existing) {
-        return res.status(404).json({ ok: false, error: "Order not found" });
-      }
-
-      if (existing.riderId !== riderId) {
-        return res.status(403).json({ ok: false, error: "Not your order" });
-      }
-
-      const order = await prisma.order.update({
-        where: { id },
-        data: { status },
-        include: { merchant: true, rider: true },
-      });
-
-      // Update rider status based on order status
-      if (status === OrderStatus.DELIVERED && riderId) {
-        await prisma.rider.update({
-          where: { id: riderId },
-          data: { status: RiderStatus.AVAILABLE },
-        });
-      } else if (
-        [OrderStatus.PICKED_UP, OrderStatus.IN_TRANSIT].includes(status) &&
-        riderId
-      ) {
-        await prisma.rider.update({
-          where: { id: riderId },
-          data: { status: RiderStatus.IN_DELIVERY },
-        });
-      }
-
-      // Broadcast status update
-      io.to("dashboard").emit("order:tracking:update", {
-        orderId: order.id,
-        status: order.status,
-        riderId: order.riderId,
-      });
-
-      if (order.riderId) {
-        io.to(`rider:${order.riderId}`).emit("order:updated", {
-          orderId: order.id,
-          order,
-        });
-      }
-
-      return res.json({ ok: true, order });
-    } catch (error) {
-      console.error("Status update error:", error);
-      return res
-        .status(500)
-        .json({ ok: false, error: "Failed to update status" });
-    }
-  }
-);
-
-// =====================
-// UPLOAD PROOF OF DELIVERY
-// =====================
+/**
+ * POST /orders/upload-csv
+ * Upload CSV file and create orders
+ * Expected CSV columns: customerName, phone, address, amount, paymentType (optional), lat (optional), lng (optional)
+ */
 router.post(
-  "/:id/pod",
-  requireAuth,
-  riderOnly,
-  podUpload.single("file"),
-  async (req: AuthRequest, res) => {
-    try {
-      const { id } = req.params;
-
-      if (!req.file) {
-        return res.status(400).json({ ok: false, error: "file required" });
-      }
-
-      const riderId = await getRiderIdForUser(req.user!.id);
-      const existing = await prisma.order.findUnique({ where: { id } });
-
-      if (!existing) {
-        return res.status(404).json({ ok: false, error: "Order not found" });
-      }
-
-      if (existing.riderId !== riderId) {
-        return res.status(403).json({ ok: false, error: "Not your order" });
-      }
-
-      const podUrl = `/uploads/${req.file.filename}`;
-
-      const order = await prisma.order.update({
-        where: { id },
-        data: {
-          podUrl,
-          status: OrderStatus.DELIVERED,
-        },
-        include: { merchant: true, rider: true },
-      });
-
-      if (riderId) {
-        await prisma.rider.update({
-          where: { id: riderId },
-          data: { status: RiderStatus.AVAILABLE },
-        });
-      }
-
-      io.to("dashboard").emit("order:tracking:update", {
-        orderId: order.id,
-        status: order.status,
-        riderId: order.riderId,
-        podUrl,
-      });
-
-      console.log(`✅ POD uploaded for order ${id}`);
-
-      return res.json({ ok: true, order, podUrl });
-    } catch (error) {
-      console.error("POD upload error:", error);
-      return res.status(500).json({ ok: false, error: "Failed to upload POD" });
-    }
-  }
-);
-
-// =====================
-// BULK CSV UPLOAD (requires merchantId in request body)
-// =====================
-router.post(
-  "/bulk-csv",
-  requireAuth,
+  "/upload-csv",
   csvUpload.single("file"),
-  async (req, res) => {
+  async (req: Request, res: Response) => {
     try {
-      if (!req.file) {
-        return res.status(400).json({ ok: false, error: "CSV file is required" });
-      }
-
       const { merchantId } = req.body;
 
       if (!merchantId) {
-        return res.status(400).json({
-          ok: false,
-          error: "merchantId is required in form data",
-        });
+        return res
+          .status(400)
+          .json({ ok: false, error: "merchantId is required" });
+      }
+
+      if (!req.file) {
+        return res.status(400).json({ ok: false, error: "No file uploaded" });
       }
 
       // Verify merchant exists
@@ -442,39 +338,111 @@ router.post(
       });
 
       if (!merchant) {
-        fs.unlink(req.file.path, () => {}); // Clean up uploaded file
-        return res.status(404).json({
+        // Clean up file
+        fs.unlinkSync(req.file.path);
+        return res.status(404).json({ ok: false, error: "Merchant not found" });
+      }
+
+      // Read and parse CSV
+      const fileContent = fs.readFileSync(req.file.path, "utf-8");
+      const records = parse(fileContent, {
+        columns: true,
+        skip_empty_lines: true,
+        trim: true,
+      });
+
+      if (!records || records.length === 0) {
+        fs.unlinkSync(req.file.path);
+        return res
+          .status(400)
+          .json({ ok: false, error: "CSV file is empty" });
+      }
+
+      // Validate required columns
+      const requiredColumns = ["customerName", "phone", "address", "amount"];
+      const firstRecord = records[0];
+      const missingColumns = requiredColumns.filter((col) => !(col in firstRecord));
+
+      if (missingColumns.length > 0) {
+        fs.unlinkSync(req.file.path);
+        return res.status(400).json({
           ok: false,
-          error: `Merchant with ID '${merchantId}' not found`,
+          error: `Missing CSV columns: ${missingColumns.join(", ")}`,
         });
       }
 
-      // Queue CSV processing job
-      await csvQueue.add("process", {
-        filePath: req.file.path,
-        merchantId,
-        merchantName: merchant.name,
-        fileName: req.file.originalname,
-      });
-
-      console.log(
-        `📁 CSV queued for processing: ${req.file.originalname} -> ${merchant.name}`
+      // Create orders from CSV records
+      const createdOrders = await Promise.all(
+        records.map((record: any) =>
+          prisma.order.create({
+            data: {
+              merchantId,
+              customerName: record.customerName.trim(),
+              phone: record.phone.trim(),
+              address: record.address.trim(),
+              amount: parseFloat(record.amount),
+              paymentType: record.paymentType?.trim() || "COD",
+              status: "NEW",
+              lat: record.lat ? parseFloat(record.lat) : null,
+              lng: record.lng ? parseFloat(record.lng) : null,
+            },
+          })
+        )
       );
 
-      return res.json({
+      res.status(201).json({
         ok: true,
-        file: req.file.filename,
-        message: `CSV '${req.file.originalname}' uploaded successfully and queued for processing`,
+        message: `Successfully imported ${createdOrders.length} orders`,
+        count: createdOrders.length,
+        orders: createdOrders,
       });
-    } catch (error: any) {
+    } catch (err: any) {
       if (req.file) {
-        fs.unlink(req.file.path, () => {});
+        fs.unlinkSync(req.file.path);
       }
-      console.error("CSV upload error:", error);
-      return res.status(500).json({
-        ok: false,
-        error: error.message || "Failed to upload CSV",
+      console.error("Error uploading CSV:", err);
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  }
+);
+
+/**
+ * POST /orders/:id/upload-pod
+ * Upload proof of delivery
+ */
+router.post(
+  "/:id/upload-pod",
+  podUpload.single("pod"),
+  async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+
+      if (!req.file) {
+        return res.status(400).json({ ok: false, error: "No file uploaded" });
+      }
+
+      const order = await prisma.order.update({
+        where: { id },
+        data: {
+          podUrl: `/uploads/${req.file.filename}`,
+          status: "DELIVERED",
+        },
+        include: {
+          merchant: true,
+          rider: true,
+        },
       });
+
+      res.json({ ok: true, order });
+    } catch (err: any) {
+      if (req.file) {
+        fs.unlinkSync(req.file.path);
+      }
+      if (err.code === "P2025") {
+        return res.status(404).json({ ok: false, error: "Order not found" });
+      }
+      console.error("Error uploading POD:", err);
+      res.status(500).json({ ok: false, error: err.message });
     }
   }
 );
