@@ -73,10 +73,20 @@ async function createRiderUser(
 }
 
 async function main() {
+  const isProduction = process.env.NODE_ENV === "production";
+  
   console.log("🌱 Seeding database...");
+  console.log(`📍 Environment: ${process.env.NODE_ENV || "development"}`);
 
+  // Always create admin in any environment
   await createAdmin();
   console.log("✅ Admin ready (0700000000 / password123)");
+
+  // Only create test merchants and riders in development
+  if (isProduction) {
+    console.log("⚠️  Skipping test data creation in production");
+    return;
+  }
 
   const carrefour = await createMerchant("Carrefour", ConnectorType.CSV);
   const naivas = await createMerchant("Naivas", ConnectorType.CSV);
@@ -95,6 +105,7 @@ async function main() {
 
   console.log("✅ Riders ready (0712345678 / 0720456789 — password: 123456)");
 
+  // Create test orders only in development
   await prisma.order.createMany({
     data: [
       {

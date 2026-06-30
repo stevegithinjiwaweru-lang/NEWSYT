@@ -3,21 +3,26 @@
   "version": "0.1.0",
   "private": true,
   "description": "Easybox Logistics backend system",
-  "main": "index.js",
+  "main": "dist/index.js",
   "type": "commonjs",
 
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
-    "build": "tsc -p .",
+    "build": "tsc -p . && npm run prisma:generate",
     "start": "node dist/index.js",
+    "start:prod": "NODE_ENV=production node dist/index.js",
 
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
 
     "seed": "ts-node --transpile-only prisma/seed.ts",
+    "seed:prod": "NODE_ENV=production ts-node --transpile-only prisma/seed.ts",
 
-    "worker": "ts-node --transpile-only src/jobs/worker.ts"
+    "worker": "ts-node --transpile-only src/jobs/worker.ts",
+
+    "verify:build": "npm run build && node -c dist/index.js",
+    "prestart:prod": "npm run verify:build && npm run db:deploy"
   },
 
   "prisma": {
