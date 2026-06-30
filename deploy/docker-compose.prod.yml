@@ -68,7 +68,39 @@ services:
     networks: [newsyt-internal]
     restart: "no"
 
-  api:
+  # BullMQ webhook delivery worker — drains the `outbound-webhooks` queue and
+  # POSTs HMAC-signed payloads to each merchant's configured webhook URL
+  # (e.g. https://gumza.ke/webhooks/dispatch/easybox). Without this service,
+  # OutboundWebhook rows accumulate in PENDING/attempts=0 forever.
+  # Same image as newsyt-api; only the CMD differs.
+  newsyt-worker:
+    container_name: newsyt-worker-1
+    image: newsyt-backend:latest
+    command: ["node", "dist/modules/external/webhooks/delivery.worker.js"]
+    restart: unless-stopped
+    env_file: [.env]
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    # Internal-only — no need to be reachable from Caddy.
+    networks: [newsyt-internal]
+
+  # Service names are namespaced (`newsyt-api`, `newsyt-web`) because Docker
+  # adds the SERVICE NAME as a DNS alias on every joined network. If this
+  # service were named `api`, the shared `zucchini_internal` network would have
+  # two containers answering to `api` (this one + zucchini-api-1) and Caddy
+  # would round-robin between them — half the gumza.ke API calls land here and
+  # 404. container_name pins the runtime name so it stays `newsyt-api-1`.
+  newsyt-api:
+    container_name: newsyt-api-1
     build:
       context: ../backend
       dockerfile: Dockerfile
@@ -89,11 +121,7 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
-    networks:
-      newsyt-internal: {}
-      zucchini_internal:
-        aliases:
-          - newsyt-api
+    networks: [newsyt-internal, zucchini_internal]
     healthcheck:
       test:
         - CMD
@@ -105,7 +133,8 @@ services:
       retries: 6
       start_period: 30s
 
-  web:
+  newsyt-web:
+    container_name: newsyt-web-1
     build:
       context: ../frontend
       dockerfile: Dockerfile
@@ -114,13 +143,9 @@ services:
     image: newsyt-frontend:latest
     restart: unless-stopped
     depends_on:
-      api:
+      newsyt-api:
         condition: service_healthy
-    networks:
-      newsyt-internal: {}
-      zucchini_internal:
-        aliases:
-          - newsyt-web
+    networks: [newsyt-internal, zucchini_internal]
 
 volumes:
   postgres-data:
