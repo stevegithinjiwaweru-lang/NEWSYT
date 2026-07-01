@@ -4,8 +4,10 @@ import path from "path";
 import fs from "fs";
 import { parse } from "csv-parse/sync";
 import { prisma } from "../prisma";
+import authMiddleware from "../middlewares/auth";
 
 const router = express.Router();
+const requireAuth = authMiddleware;
 
 // File upload config
 const UPLOADS_DIR = process.env.UPLOADS_DIR || path.join(process.cwd(), "uploads");
@@ -14,7 +16,7 @@ const csvUpload = multer({
   storage: multer.diskStorage({
     destination: (_req, _file, cb) => cb(null, UPLOADS_DIR),
     filename: (_req, file, cb) =>
-      cb(null, `${Date.now()}-${file.originalname}`),
+      cb(null, `csv-${Date.now()}-${file.originalname}`),
   }),
   fileFilter: (_req, file, cb) => {
     if (file.mimetype === "text/csv" || file.originalname.endsWith(".csv")) {
@@ -23,6 +25,7 @@ const csvUpload = multer({
       cb(new Error("Only CSV files are allowed"));
     }
   },
+  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB max
 });
 
 const podUpload = multer({
@@ -31,13 +34,14 @@ const podUpload = multer({
     filename: (_req, file, cb) =>
       cb(null, `pod-${Date.now()}-${file.originalname}`),
   }),
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB max
 });
 
 /**
  * GET /orders
  * Fetch all orders with optional filters
  */
-router.get("/", async (req: Request, res: Response) => {
+router.get("/", requireAuth, async (req: Request, res: Response) => {
   try {
     const { merchantId, status, riderId } = req.query;
 
@@ -68,7 +72,7 @@ router.get("/", async (req: Request, res: Response) => {
  * GET /orders/:id
  * Fetch single order by ID
  */
-router.get("/:id", async (req: Request, res: Response) => {
+router.get("/:id", requireAuth, async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
 
@@ -95,7 +99,7 @@ router.get("/:id", async (req: Request, res: Response) => {
  * POST /orders
  * Create a new order manually
  */
-router.post("/", async (req: Request, res: Response) => {
+router.post("/", requireAuth, async (req: Request, res: Response) => {
   try {
     const {
       merchantId,
@@ -155,7 +159,7 @@ router.post("/", async (req: Request, res: Response) => {
  * PUT /orders/:id
  * Update an order
  */
-router.put("/:id", async (req: Request, res: Response) => {
+router.put("/:id", requireAuth, async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const {
@@ -204,7 +208,7 @@ router.put("/:id", async (req: Request, res: Response) => {
  * DELETE /orders/:id
  * Delete an order
  */
-router.delete("/:id", async (req: Request, res: Response) => {
+router.delete("/:id", requireAuth, async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
 
@@ -226,7 +230,7 @@ router.delete("/:id", async (req: Request, res: Response) => {
  * POST /orders/bulk-assign
  * Assign multiple orders to a rider
  */
-router.post("/bulk-assign", async (req: Request, res: Response) => {
+router.post("/bulk-assign", requireAuth, async (req: Request, res: Response) => {
   try {
     const { riderId, orderIds } = req.body;
 
@@ -270,7 +274,7 @@ router.post("/bulk-assign", async (req: Request, res: Response) => {
  * POST /orders/:id/assign
  * Assign a single order to a rider
  */
-router.post("/:id/assign", async (req: Request, res: Response) => {
+router.post("/:id/assign", requireAuth, async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const { riderId } = req.body;
@@ -314,15 +318,18 @@ router.post("/:id/assign", async (req: Request, res: Response) => {
  * POST /orders/upload-csv
  * Upload CSV file and create orders
  * Expected CSV columns: customerName, phone, address, amount, paymentType (optional), lat (optional), lng (optional)
+ * Example: John Doe,0712345678,Karen,1500,COD,-1.2921,36.8219
  */
 router.post(
   "/upload-csv",
+  requireAuth,
   csvUpload.single("file"),
   async (req: Request, res: Response) => {
     try {
       const { merchantId } = req.body;
 
       if (!merchantId) {
+        if (req.file) fs.unlinkSync(req.file.path);
         return res
           .status(400)
           .json({ ok: false, error: "merchantId is required" });
@@ -338,18 +345,27 @@ router.post(
       });
 
       if (!merchant) {
-        // Clean up file
         fs.unlinkSync(req.file.path);
         return res.status(404).json({ ok: false, error: "Merchant not found" });
       }
 
       // Read and parse CSV
       const fileContent = fs.readFileSync(req.file.path, "utf-8");
-      const records = parse(fileContent, {
-        columns: true,
-        skip_empty_lines: true,
-        trim: true,
-      });
+      let records: any[];
+      
+      try {
+        records = parse(fileContent, {
+          columns: true,
+          skip_empty_lines: true,
+          trim: true,
+        });
+      } catch (parseErr: any) {
+        fs.unlinkSync(req.file.path);
+        return res.status(400).json({
+          ok: false,
+          error: `CSV parsing error: ${parseErr.message}`,
+        });
+      }
 
       if (!records || records.length === 0) {
         fs.unlinkSync(req.file.path);
@@ -367,14 +383,37 @@ router.post(
         fs.unlinkSync(req.file.path);
         return res.status(400).json({
           ok: false,
-          error: `Missing CSV columns: ${missingColumns.join(", ")}`,
+          error: `Missing CSV columns: ${missingColumns.join(", ")}. Required: ${requiredColumns.join(", ")}`,
         });
       }
 
-      // Create orders from CSV records
-      const createdOrders = await Promise.all(
-        records.map((record: any) =>
-          prisma.order.create({
+      // Validate and create orders
+      const errors: string[] = [];
+      const createdOrders = [];
+
+      for (let i = 0; i < records.length; i++) {
+        const record = records[i];
+        
+        try {
+          // Validate required fields
+          if (!record.customerName?.trim()) {
+            errors.push(`Row ${i + 1}: customerName is required`);
+            continue;
+          }
+          if (!record.phone?.trim()) {
+            errors.push(`Row ${i + 1}: phone is required`);
+            continue;
+          }
+          if (!record.address?.trim()) {
+            errors.push(`Row ${i + 1}: address is required`);
+            continue;
+          }
+          if (!record.amount) {
+            errors.push(`Row ${i + 1}: amount is required`);
+            continue;
+          }
+
+          const order = await prisma.order.create({
             data: {
               merchantId,
               customerName: record.customerName.trim(),
@@ -386,19 +425,39 @@ router.post(
               lat: record.lat ? parseFloat(record.lat) : null,
               lng: record.lng ? parseFloat(record.lng) : null,
             },
-          })
-        )
-      );
+          });
+          
+          createdOrders.push(order);
+        } catch (err: any) {
+          errors.push(`Row ${i + 1}: ${err.message}`);
+        }
+      }
+
+      // Clean up file
+      fs.unlinkSync(req.file.path);
+
+      if (createdOrders.length === 0 && errors.length > 0) {
+        return res.status(400).json({
+          ok: false,
+          error: "No orders were created",
+          details: errors,
+        });
+      }
 
       res.status(201).json({
         ok: true,
         message: `Successfully imported ${createdOrders.length} orders`,
         count: createdOrders.length,
         orders: createdOrders,
+        ...(errors.length > 0 && { warnings: errors }),
       });
     } catch (err: any) {
       if (req.file) {
-        fs.unlinkSync(req.file.path);
+        try {
+          fs.unlinkSync(req.file.path);
+        } catch (e) {
+          // ignore
+        }
       }
       console.error("Error uploading CSV:", err);
       res.status(500).json({ ok: false, error: err.message });
@@ -412,6 +471,7 @@ router.post(
  */
 router.post(
   "/:id/upload-pod",
+  requireAuth,
   podUpload.single("pod"),
   async (req: Request, res: Response) => {
     try {
@@ -436,7 +496,11 @@ router.post(
       res.json({ ok: true, order });
     } catch (err: any) {
       if (req.file) {
-        fs.unlinkSync(req.file.path);
+        try {
+          fs.unlinkSync(req.file.path);
+        } catch (e) {
+          // ignore
+        }
       }
       if (err.code === "P2025") {
         return res.status(404).json({ ok: false, error: "Order not found" });
