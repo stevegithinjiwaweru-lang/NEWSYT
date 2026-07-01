@@ -2,74 +2,67 @@ import {
   UserRole,
   ConnectorType,
   MerchantStatus,
-  PaymentType,
-  OrderStatus,
-  RiderStatus,
 } from "@prisma/client";
 import bcrypt from "bcrypt";
 import { prisma } from "../src/prisma";
 
+/**
+ * Create admin user - always created in all environments
+ */
 async function createAdmin() {
   const phone = "0700000000";
   const existing = await prisma.user.findUnique({ where: { phone } });
-  if (existing) return existing;
+  
+  if (existing) {
+    console.log("✅ Admin already exists");
+    return existing;
+  }
 
-  return prisma.user.create({
+  const admin = await prisma.user.create({
     data: {
-      name: "Admin",
+      name: "System Admin",
       phone,
+      email: "admin@logistics.local",
       passwordHash: await bcrypt.hash("password123", 10),
       role: UserRole.ADMIN,
     },
   });
+
+  console.log("✅ Admin created: 0700000000 / password123");
+  return admin;
 }
 
-async function createMerchant(name: string, connector: ConnectorType) {
-  const existing = await prisma.merchant.findFirst({ where: { name } });
-  if (existing) return existing;
+/**
+ * Create default merchants - development only
+ */
+async function createDefaultMerchants() {
+  const merchants = [
+    { name: "Carrefour", connector: ConnectorType.CSV },
+    { name: "Zucchini", connector: ConnectorType.API },
+  ];
 
-  return prisma.merchant.create({
-    data: {
-      name,
-      connector,
-      status: MerchantStatus.CONNECTED,
-    },
-  });
-}
+  for (const { name, connector } of merchants) {
+    const existing = await prisma.merchant.findFirst({ where: { name } });
+    
+    if (existing) {
+      console.log(`✅ Merchant already exists: ${name}`);
+      continue;
+    }
 
-async function createRiderUser(
-  phone: string,
-  name: string,
-  bikeReg: string
-) {
-  const existingUser = await prisma.user.findUnique({ where: { phone } });
-  if (existingUser) {
-    const rider = await prisma.rider.findUnique({
-      where: { userId: existingUser.id },
+    await prisma.merchant.create({
+      data: {
+        name,
+        connector,
+        status: MerchantStatus.CONNECTED,
+        config: connector === ConnectorType.API ? {
+          apiKey: process.env.EASYBOX_API_KEY || "dev-key",
+          webhookSecret: process.env.EASYBOX_WEBHOOK_SECRET || "dev-secret",
+        } : {},
+      },
     });
-    return { user: existingUser, rider };
+
+    console.log(`✅ Merchant created: ${name} (${connector})`);
   }
-
-  const user = await prisma.user.create({
-    data: {
-      name,
-      phone,
-      passwordHash: await bcrypt.hash("123456", 10),
-      role: UserRole.RIDER,
-    },
-  });
-
-  const rider = await prisma.rider.create({
-    data: {
-      userId: user.id,
-      name,
-      phone,
-      bikeReg,
-      status: RiderStatus.AVAILABLE,
-    },
-  });
-
-  return { user, rider };
 }
 
 async function main() {
@@ -78,69 +71,19 @@ async function main() {
   console.log("🌱 Seeding database...");
   console.log(`📍 Environment: ${process.env.NODE_ENV || "development"}`);
 
-  // Always create admin in any environment
+  // ALWAYS create admin
   await createAdmin();
-  console.log("✅ Admin ready (0700000000 / password123)");
 
-  // Only create test merchants and riders in development
-  if (isProduction) {
-    console.log("⚠️  Skipping test data creation in production");
-    return;
+  // Only create default merchants in development
+  if (!isProduction) {
+    console.log("🏪 Creating default merchants...");
+    await createDefaultMerchants();
+    console.log("✅ Development merchants ready");
+  } else {
+    console.log("⚠️  Skipping merchant creation in production");
   }
 
-  const carrefour = await createMerchant("Carrefour", ConnectorType.CSV);
-  const naivas = await createMerchant("Naivas", ConnectorType.CSV);
-  const zuch = await createMerchant("Zuchinni", ConnectorType.API);
-
-  const { rider: rider1 } = await createRiderUser(
-    "0712345678",
-    "James Kariuki",
-    "KMCG 123A"
-  );
-  const { rider: rider2 } = await createRiderUser(
-    "0720456789",
-    "Peter Mwangi",
-    "KMDU 456B"
-  );
-
-  console.log("✅ Riders ready (0712345678 / 0720456789 — password: 123456)");
-
-  // Create test orders only in development
-  await prisma.order.createMany({
-    data: [
-      {
-        merchantId: carrefour.id,
-        customerName: "John Kamau",
-        phone: "0711000001",
-        address: "Garden Estate, Thika Rd",
-        amount: 1250,
-        paymentType: PaymentType.COD,
-        status: OrderStatus.NEW,
-      },
-      {
-        merchantId: naivas.id,
-        customerName: "Mary Wanjiku",
-        phone: "0711000002",
-        address: "Roysambu",
-        amount: 850,
-        paymentType: PaymentType.COD,
-        status: OrderStatus.NEW,
-      },
-      {
-        merchantId: zuch.id,
-        customerName: "Peter Otieno",
-        phone: "0711000003",
-        address: "Kilimani",
-        amount: 2450,
-        paymentType: PaymentType.PREPAID,
-        status: OrderStatus.ASSIGNED,
-        riderId: rider1.id,
-      },
-    ],
-    skipDuplicates: true,
-  });
-
-  console.log("🎉 Seeding complete");
+  console.log("🎉 Seed complete");
 }
 
 main()
