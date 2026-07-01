@@ -82,21 +82,15 @@ io.on("connection", (socket) => {
       // =====================
       // DASHBOARD BROADCAST
       // =====================
-      io.to(DISPATCH_ROOM).emit(
-        "rider:location:update",
-        payload
-      );
+      io.to(DISPATCH_ROOM).emit("rider:location:update", payload);
 
       // =====================
       // ACK TO RIDER
       // =====================
-      io.to(RIDER_ROOM(data.riderId)).emit(
-        "location:ack",
-        {
-          success: true,
-          timestamp: payload.timestamp,
-        }
-      );
+      io.to(RIDER_ROOM(data.riderId)).emit("location:ack", {
+        success: true,
+        timestamp: payload.timestamp,
+      });
 
       console.log("📍 Rider location:", payload);
     } catch (error) {
@@ -128,18 +122,12 @@ io.on("connection", (socket) => {
           },
         });
 
-        io.to(RIDER_ROOM(data.riderId)).emit(
-          "order:assigned",
-          {
-            orderId: data.orderId,
-            message: "New delivery assigned",
-          }
-        );
+        io.to(RIDER_ROOM(data.riderId)).emit("order:assigned", {
+          orderId: data.orderId,
+          message: "New delivery assigned",
+        });
 
-        io.to(DISPATCH_ROOM).emit(
-          "order:assigned",
-          data
-        );
+        io.to(DISPATCH_ROOM).emit("order:assigned", data);
 
         console.log("📦 Order assigned:", data);
       } catch (error) {
@@ -171,10 +159,7 @@ io.on("connection", (socket) => {
           },
         });
 
-        io.to(DISPATCH_ROOM).emit(
-          "order:tracking:update",
-          data
-        );
+        io.to(DISPATCH_ROOM).emit("order:tracking:update", data);
 
         console.log("📊 Order status:", data);
       } catch (error) {

@@ -1,10 +1,10 @@
-# Easybox Logistics Platform
+# NEWSYT - Last-Mile Logistics System
 
 A full-stack last-mile delivery system with three connected applications:
 
 | App | Stack | Purpose |
-|-----|-------|---------|
-| **backend/** | Node.js, Express, Prisma, PostgreSQL, Socket.IO | REST API, real-time tracking, CSV import |
+|-----|-------|----------|
+| **backend/** | Node.js, Express, Prisma, PostgreSQL, Socket.IO | REST API, real-time tracking, CSV import, Easybox webhooks |
 | **frontend/** | React, Vite, Ant Design | Dispatch dashboard for admins and dispatchers |
 | **riderapp/** | Expo, React Native | Mobile app for delivery riders |
 
@@ -17,9 +17,12 @@ A full-stack last-mile delivery system with three connected applications:
 └──────────────┘                      └──────┬───────┘
                                            │
 ┌──────────────┐   REST + WebSocket         │ PostgreSQL + Redis
-│  Rider App   │ ◄─────────────────────────┘
-│    (Expo)    │
-└──────────────┘
+│  Rider App   │ ◄─────────────────────────┤
+│    (Expo)    │                           │
+└──────────────┘                      ┌────┴────────┐
+                                      │  Easybox    │
+                                      │  API/Events │
+                                      └─────────────┘
 ```
 
 ## Prerequisites
@@ -36,6 +39,7 @@ A full-stack last-mile delivery system with three connected applications:
 ```bash
 cd backend
 cp .env.example .env
+# Edit .env with your database credentials and Easybox API keys
 npm install
 
 # Start database (Docker)
@@ -79,35 +83,47 @@ For physical devices, update `LOCAL_IP` in `riderapp/src/config.ts` to your mach
 
 | Role | Phone | Password |
 |------|-------|----------|
-| Admin / Dispatcher | `0700000000` | `password123` |
-| Rider (James) | `0712345678` | `123456` |
-| Rider (Peter) | `0720456789` | `123456` |
+| Admin | `0700000000` | `password123` |
 
-## End-to-End Flow
+## Features
 
-1. **Login** to the dashboard as admin (`0700000000`)
-2. **Create orders** on the Orders page or upload a CSV
-3. **Assign riders** on the Dispatch page
-4. **Rider logs in** on the mobile app and sees assigned deliveries
-5. **Rider starts delivery** — GPS location streams to the dashboard
-6. **Track riders** live on the Tracking page
-7. **Rider marks delivered** or uploads proof of delivery
+### Orders Management
+- ✅ Create orders manually
+- ✅ Upload orders via CSV (Carrefour, other merchants)
+- ✅ Assign orders to riders
+- ✅ Track order status in real-time
+- ✅ Proof of delivery (POD) image upload
 
-## API Overview
+### CSV Upload
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/auth/login` | Login with phone + password |
-| GET | `/auth/me` | Current user profile |
-| GET | `/orders` | List all orders (dashboard) |
-| GET | `/orders/mine` | Rider's assigned orders |
-| PATCH | `/orders/:id/assign` | Assign rider to order |
-| PATCH | `/orders/:id/status` | Update order status (rider) |
-| POST | `/orders/:id/pod` | Upload proof of delivery |
-| GET | `/riders` | List riders |
-| POST | `/riders/:id/location` | Update rider GPS location |
+Expected CSV format:
+```
+customerName,phone,address,amount,paymentType,lat,lng
+John Doe,0712345678,Karen,1500,COD,-1.2921,36.8219
+Mary Smith,0720456789,Roysambu,2500,PREPAID,-1.2900,36.8200
+```
 
-## Real-Time Events (Socket.IO)
+Required columns: `customerName`, `phone`, `address`, `amount`
+Optional columns: `paymentType` (default: COD), `lat`, `lng`
+
+### Easybox Integration
+
+Connect with Easybox dispatch service:
+
+1. **Configure in .env:**
+   ```
+   EASYBOX_API_KEY=your-api-key
+   EASYBOX_WEBHOOK_SECRET=your-secret-min-32-chars
+   ```
+
+2. **Create Zucchini merchant with API connector**
+
+3. **Webhook endpoint:** `POST /webhooks/easybox`
+   - Signature verification: HMAC-SHA256
+   - Replay protection: 5-minute window
+   - Events: created, assigned, picked_up, en_route, arrived, delivered, failed, cancelled
+
+### Real-Time Tracking
 
 | Event | Direction | Description |
 |-------|-----------|-------------|
@@ -115,6 +131,42 @@ For physical devices, update `LOCAL_IP` in `riderapp/src/config.ts` to your mach
 | `rider:location:update` | Server → Dashboard | Live rider GPS |
 | `order:assigned` | Server → Rider/Dashboard | New assignment |
 | `order:tracking:update` | Server → Dashboard | Status change |
+
+## API Overview
+
+### Authentication
+```bash
+POST /auth/login
+{ "phone": "0700000000", "password": "password123" }
+```
+
+### Orders
+```bash
+GET /orders                          # List all orders
+POST /orders                         # Create order
+GET /orders/:id                      # Get order
+PUT /orders/:id                      # Update order
+DELETE /orders/:id                   # Delete order
+POST /orders/:id/assign              # Assign rider
+POST /orders/upload-csv              # Bulk import
+POST /orders/:id/upload-pod          # Upload POD
+```
+
+### Riders
+```bash
+GET /riders                          # List riders
+POST /riders                         # Create rider
+GET /riders/:id                      # Get rider
+POST /riders/:id/location            # Update location
+```
+
+### Merchants
+```bash
+GET /merchants                       # List merchants
+POST /merchants                      # Create merchant
+PATCH /merchants/:id                 # Update merchant
+POST /merchants/:id/sync             # Manual sync
+```
 
 ## Docker (Full Stack)
 
@@ -129,8 +181,59 @@ This starts PostgreSQL, Redis, and the backend API on port 4000.
 
 ```
 NEWSYT/
-├── backend/          API server, Prisma schema, Socket.IO
-├── frontend/         React dispatch dashboard
-├── riderapp/         Expo rider mobile app
+├── backend/
+│   ├── src/
+│   │   ├── routes/          # API endpoints
+│   │   ├── middlewares/      # Auth, validation
+│   │   ├── socket.ts         # Real-time events
+│   │   ├── app.ts            # Express setup
+│   │   └── index.ts          # Entry point
+│   ├── prisma/
+│   │   ├── schema.prisma     # Database schema
+│   │   └── seed.ts           # Database seeding
+│   ├── .env.example
+│   └── package.json
+├── frontend/
+│   ├── src/
+│   │   ├── pages/            # React components
+│   │   ├── api/              # API client
+│   │   ├── services/         # Socket.IO, utils
+│   │   └── App.tsx
+│   ├── .env.example
+│   └── package.json
+├── riderapp/
+│   ├── src/
+│   │   ├── screens/          # Mobile screens
+│   │   └── config.ts
+│   └── package.json
 └── README.md
 ```
+
+## Troubleshooting
+
+### CSV Upload fails
+- Check column headers match exactly: `customerName`, `phone`, `address`, `amount`
+- Ensure file is UTF-8 encoded
+- Verify merchant has CSV connector type
+
+### Easybox webhook not received
+- Confirm webhook URL is publicly accessible
+- Verify EASYBOX_WEBHOOK_SECRET is set
+- Check X-Easybox-Signature header is present
+- Review server logs for signature verification errors
+
+### Socket.IO not connecting
+- Ensure backend CORS includes frontend URL
+- Check VITE_SOCKET_URL matches backend URL
+- Browser console for WebSocket errors
+
+## Contributing
+
+1. Create feature branch: `git checkout -b feature/your-feature`
+2. Commit changes: `git commit -m "feat: description"`
+3. Push: `git push origin feature/your-feature`
+4. Create Pull Request
+
+## License
+
+MIT

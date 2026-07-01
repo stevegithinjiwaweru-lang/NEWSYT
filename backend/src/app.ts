@@ -10,15 +10,21 @@ import authRoutes from "./routes/auth";
 import ordersRoutes from "./routes/orders";
 import ridersRoutes from "./routes/riders";
 import merchantsRoutes from "./routes/merchants";
-import dispatchRoutes from "./routes/dispatches";
+import easyboxWebhookRoutes from "./routes/easybox-webhooks";
 
 export const app = express();
 
 // =====================
 // MIDDLEWARE
 // =====================
-app.use(cors());
-app.use(express.json());
+app.use(
+  cors({
+    origin: process.env.FRONTEND_URL || "http://localhost:5173",
+    credentials: true,
+  })
+);
+app.use(express.json({ limit: "50mb" }));
+app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
 // =====================
 // UPLOADS SETUP (Docker safe)
@@ -40,7 +46,11 @@ app.use("/auth", authRoutes);
 app.use("/orders", ordersRoutes);
 app.use("/riders", ridersRoutes);
 app.use("/merchants", merchantsRoutes);
-app.use("/v1/dispatches", dispatchRoutes);
+
+// =====================
+// EASYBOX WEBHOOKS (no auth required)
+// =====================
+app.use("/webhooks/easybox", easyboxWebhookRoutes);
 
 // =====================
 // HEALTH CHECK
@@ -60,25 +70,31 @@ const httpServer = http.createServer(app);
 export const server = httpServer;
 
 // =====================
-// SOCKET.IO (SINGLETON - DO NOT DUPLICATE ANYWHERE)
+// SOCKET.IO
 // =====================
 export const io = new IOServer(httpServer, {
   cors: {
-    origin: "*",
+    origin: process.env.FRONTEND_URL || "http://localhost:5173",
+    methods: ["GET", "POST"],
+    credentials: true,
   },
 });
 
 // =====================
-// GLOBAL ERROR HANDLER (captures multer and other route errors)
+// GLOBAL ERROR HANDLER
 // =====================
-// Must be registered after routes
 app.use((err: any, _req: any, res: any, _next: any) => {
   console.error("Unhandled error:", err && err.message ? err.message : err);
 
-  // Multer file filter or validation errors should return 400
-  if (err && err.message) {
-    return res.status(400).json({ ok: false, error: err.message });
+  if (err && err.message && err.message.includes("Only CSV files are allowed")) {
+    return res.status(400).json({
+      ok: false,
+      error: "Invalid file type. Only CSV files are allowed.",
+    });
   }
 
-  return res.status(500).json({ ok: false, error: "Internal server error" });
+  res.status(500).json({
+    ok: false,
+    error: "Internal server error",
+  });
 });
