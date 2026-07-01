@@ -19,19 +19,6 @@ import { waitForDB } from "./utils/waitForDB";
 const PORT = Number(process.env.PORT) || 4000;
 const NODE_ENV = process.env.NODE_ENV || "development";
 
-// Verify dist folder exists in production
-if (NODE_ENV === "production") {
-  try {
-    require.resolve("./app");
-    console.log("✅ dist/index.js entry point verified");
-  } catch (err) {
-    console.error(
-      "❌ dist/ folder missing or invalid. Run: npm run build"
-    );
-    process.exit(1);
-  }
-}
-
 async function bootstrap() {
   try {
     console.log(`🚀 Starting Easybox backend...`);
@@ -40,9 +27,11 @@ async function bootstrap() {
 
     await waitForDB();
 
+    // cPanel compatibility: listen on all interfaces on assigned port
     server.listen(PORT, "0.0.0.0", () => {
-      console.log(`✅ Easybox backend running on http://0.0.0.0:${PORT}`);
+      console.log(`✅ Easybox backend running on port ${PORT}`);
       console.log(`📦 Node version: ${process.version}`);
+      console.log(`🌍 CORS enabled for: ${process.env.FRONTEND_URL || "*"}`);
     });
   } catch (err) {
     console.error("❌ Failed to start server:", err);
@@ -50,7 +39,7 @@ async function bootstrap() {
   }
 }
 
-// Graceful shutdown
+// Graceful shutdown for cPanel
 process.on("SIGTERM", () => {
   console.log("🛑 SIGTERM received, shutting down gracefully...");
   server.close(() => {
