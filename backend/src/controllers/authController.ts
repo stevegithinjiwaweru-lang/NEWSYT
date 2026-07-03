@@ -46,8 +46,12 @@ export async function refresh(req: Request, res: Response) {
   try {
     const payload = verifyRefreshToken(refreshToken) as { sub: string };
     const user = await prisma.user.findUnique({ where: { id: payload.sub } });
+    // rotate refresh token: delete old and issue new
+    await prisma.refreshToken.deleteMany({ where: { token: refreshToken } });
+    const newRefresh = signRefreshToken({ sub: payload.sub });
+    await prisma.refreshToken.create({ data: { token: newRefresh, userId: payload.sub, expiresAt: add(new Date(), { days: 7 }) } });
     const accessToken = signAccessToken({ sub: payload.sub, role: user?.role });
-    return res.json({ ok: true, accessToken });
+    return res.json({ ok: true, accessToken, refreshToken: newRefresh });
   } catch (err) {
     logger.error('Refresh token verification failed', err);
     return res.status(401).json({ error: 'Invalid refresh token' });

@@ -4,6 +4,7 @@ import http from "http";
 import { Server as IOServer } from "socket.io";
 import path from "path";
 import fs from "fs";
+import helmet from "helmet";
 import { requestLogger } from "./middlewares/requestLogger";
 import { errorHandler } from "./middlewares/errorHandler";
 import ordersRoutes from "./routes/orders";
@@ -12,17 +13,20 @@ import ridersRoutes from "./routes/riders";
 import merchantsRoutes from "./routes/merchants";
 import dispatchRoutes from "./routes/dispatches";
 import { apiRateLimiter } from "./middlewares/rateLimiter";
+import registerSwagger from "./swagger";
 
 export const app = express();
 
 // CORS
+const frontend = process.env.FRONTEND_URL || "http://localhost:5173";
 const corsOptions = {
-  origin: (process.env.FRONTEND_URL || "*").split(",").map((u) => u.trim()),
+  origin: Array.isArray(frontend) ? frontend : frontend,
   credentials: true,
   methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
 };
 
+app.use(helmet());
 app.use(cors(corsOptions));
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
@@ -49,6 +53,9 @@ app.use("/orders", ordersRoutes);
 app.use("/riders", ridersRoutes);
 app.use("/merchants", merchantsRoutes);
 app.use("/v1/dispatches", dispatchRoutes);
+
+// swagger
+registerSwagger(app);
 
 // health
 app.get("/health", (_req, res) => {
