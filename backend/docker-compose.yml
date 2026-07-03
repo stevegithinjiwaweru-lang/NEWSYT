@@ -41,9 +41,16 @@ services:
     environment:
       DATABASE_URL: postgresql://postgres:postgres@db:5432/easybox?schema=public
       REDIS_URL: redis://redis:6379
+      NODE_ENV: development
+    # For local development we mount source so we can iterate quickly.
     volumes:
       - .:/app
-    command: sh -c "npm run db:deploy && npm run seed && npm run start"
+      - /app/node_modules
+    # Development command: run ts-node-dev for hot reload; it reads host sources and doesn't require dist
+    command: sh -c "npm ci && npm run dev"
+    # If you prefer to use the built production image (no mount), comment the volumes above and use:
+    # command: sh -c "npm run build && npm run db:deploy && npm run seed && npm run start"
+    # and ensure you do NOT mount the source into /app (so built dist remains inside the image).
 
 volumes:
   pgdata:
