@@ -21,11 +21,7 @@ const Riders: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [form] = Form.useForm();
 
-  const {
-    data,
-    isLoading,
-    refetch,
-  } = useQuery({
+  const { data, isLoading, refetch } = useQuery({
     queryKey: ["riders"],
     queryFn: fetchRiders,
   });
@@ -37,20 +33,40 @@ const Riders: React.FC = () => {
     try {
       setLoading(true);
 
-      await client.post("/riders", {
+      const res = await client.post("/riders", {
         name: vals.name,
         phone: vals.phone,
         bikeReg: vals.bikeReg,
       });
 
+      const { rider, tempPassword } = res.data;
+
       message.success("Rider created");
       form.resetFields();
       setOpen(false);
       refetch();
+
+      if (tempPassword) {
+        Modal.info({
+          title: "Rider account created",
+          content: (
+            <div>
+              <p>
+                The rider account was created with the following credentials:
+              </p>
+              <p>
+                <strong>Phone:</strong> {rider.phone}
+              </p>
+              <p>
+                <strong>Temporary password:</strong> {tempPassword}
+              </p>
+              <p>Please ask the rider to change the password after first login.</p>
+            </div>
+          ),
+        });
+      }
     } catch (err: any) {
-      message.error(
-        err?.response?.data?.error || "Failed to create rider"
-      );
+      message.error(err?.response?.data?.error || "Failed to create rider");
     } finally {
       setLoading(false);
     }
@@ -109,11 +125,7 @@ const Riders: React.FC = () => {
 
                       <div style={{ marginTop: 6 }}>
                         <Tag
-                          color={
-                            r.status === "AVAILABLE"
-                              ? "green"
-                              : "orange"
-                          }
+                          color={r.status === "AVAILABLE" ? "green" : "orange"}
                         >
                           {r.status}
                         </Tag>
@@ -133,40 +145,20 @@ const Riders: React.FC = () => {
         onCancel={() => setOpen(false)}
         footer={null}
       >
-        <Form
-          form={form}
-          layout="vertical"
-          onFinish={addRider}
-        >
-          <Form.Item
-            name="name"
-            label="Name"
-            rules={[{ required: true }]}
-          >
+        <Form form={form} layout="vertical" onFinish={addRider}>
+          <Form.Item name="name" label="Name" rules={[{ required: true }]}> 
             <Input />
           </Form.Item>
 
-          <Form.Item
-            name="phone"
-            label="Phone"
-            rules={[{ required: true }]}
-          >
+          <Form.Item name="phone" label="Phone" rules={[{ required: true }]}> 
             <Input />
           </Form.Item>
 
-          <Form.Item
-            name="bikeReg"
-            label="Bike Registration"
-          >
+          <Form.Item name="bikeReg" label="Bike Registration"> 
             <Input />
           </Form.Item>
 
-          <Button
-            type="primary"
-            htmlType="submit"
-            loading={loading}
-            block
-          >
+          <Button type="primary" htmlType="submit" loading={loading} block>
             Create Rider
           </Button>
         </Form>
