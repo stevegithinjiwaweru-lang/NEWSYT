@@ -1,0 +1,10 @@
+Order ID,Customer,Phone,Address,Amount,Status
+cmqxqnbyz0007suxo7fh3fshz,Mary Wanjiku,0711000002,Roysambu,850,ASSIGNED
+cmqxqnbyz0008suxo271vfoxn,Peter Otieno,0711000003,Kilimani,2450,DELIVERED
+cmqxqnbyz0006suxoi29q2vb4,John Kamau,0711000001,Garden Estate, Thika Rd,1250,ASSIGNED
+cmqu4abre0000t4tcx44i4b0y,John Kamau,0712345678,Garden Estate,1250,ASSIGNED
+cmqu4abre0002t4tc65g1568d,Peter Mwangi,0734567890,Kilimani,2450,ASSIGNED
+cmqu4abre0001t4tct7fpfm1n,Mary Wanjiku,0720456789,Roysambu,850,ASSIGNED
+cmqu2vbwi0006t4v0b359fe76,John Kamau,0712345678,Garden Estate, Thika Rd,1250,NEW
+cmqu2vbwi0008t4v0seam0sr4,Peter Mwangi,0734567890,Kilimani,2450,ASSIGNED
+cmqu2vbwi0007t4v0rq3jbzaf,Mary Wanjiku,0720456789,Roysambu,850,NEW

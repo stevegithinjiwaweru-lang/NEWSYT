@@ -1,36 +1,50 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Card, Form, Input, Button, message } from "antd";
-import client from "../api/client";
+import { Card, Form, Input, Button, Typography, message } from "antd";
+import { login } from "../services/auth.service";
+
+const { Title, Text } = Typography;
+
+interface LoginFormValues {
+  phone: string;
+  password: string;
+}
 
 const Login: React.FC = () => {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
 
-  const onFinish = async (vals: { phone: string; password: string }) => {
+  const onFinish = async (values: LoginFormValues) => {
     try {
       setLoading(true);
 
-      const { data } = await client.post("/auth/login", {
-        phone: vals.phone,
-        password: vals.password,
-      });
-
-      localStorage.setItem("accessToken", data.accessToken);
-      localStorage.setItem("refreshToken", data.refreshToken);
-      localStorage.setItem("user", JSON.stringify(data.user));
+      const data = await login(values.phone, values.password);
 
       message.success("Login successful");
 
       const role = data.user?.role;
-      if (role === "DISPATCHER") {
-        navigate("/orders");
-      } else {
-        navigate("/dashboard");
+
+      switch (role) {
+        case "ADMIN":
+          navigate("/dashboard");
+          break;
+
+        case "DISPATCHER":
+          navigate("/orders");
+          break;
+
+        case "RIDER":
+          navigate("/rider");
+          break;
+
+        default:
+          navigate("/");
       }
     } catch (err: any) {
       message.error(
-        err?.response?.data?.error || err.message || "Login failed"
+        err?.response?.data?.error ||
+          err?.message ||
+          "Invalid phone or password"
       );
     } finally {
       setLoading(false);
@@ -41,49 +55,88 @@ const Login: React.FC = () => {
     <div
       style={{
         display: "flex",
-        height: "100vh",
-        alignItems: "center",
         justifyContent: "center",
-        background: "#f6f7fb",
+        alignItems: "center",
+        minHeight: "100vh",
+        background: "#f5f7fa",
+        padding: 20,
       }}
     >
-      <Card style={{ width: 420, borderRadius: 12 }}>
+      <Card
+        style={{
+          width: 420,
+          borderRadius: 12,
+        }}
+      >
         <div
           style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 12,
-            marginBottom: 10,
+            textAlign: "center",
+            marginBottom: 30,
           }}
         >
-          <img src="/src/assets/logo.svg" alt="logo" style={{ width: 48 }} />
-          <div>
-            <div style={{ fontWeight: 800 }}>EASYBOX</div>
-            <div style={{ color: "#888", fontSize: 12 }}>
-              Dispatch & Operations
-            </div>
-          </div>
+          <img
+            src="/logo.svg"
+            alt="EasyBox"
+            style={{
+              width: 70,
+              marginBottom: 12,
+            }}
+          />
+
+          <Title level={3} style={{ marginBottom: 0 }}>
+            EasyBox
+          </Title>
+
+          <Text type="secondary">
+            Dispatch & Operations Management
+          </Text>
         </div>
 
-        <Form layout="vertical" onFinish={onFinish}>
+        <Form<LoginFormValues>
+          layout="vertical"
+          onFinish={onFinish}
+          autoComplete="off"
+        >
           <Form.Item
-            label="Phone"
+            label="Phone Number"
             name="phone"
-            rules={[{ required: true, message: "Phone is required" }]}
+            rules={[
+              {
+                required: true,
+                message: "Please enter your phone number",
+              },
+            ]}
           >
-            <Input placeholder="0700000000" />
+            <Input
+              size="large"
+              placeholder="0712345678"
+            />
           </Form.Item>
 
           <Form.Item
             label="Password"
             name="password"
-            rules={[{ required: true, message: "Password is required" }]}
+            rules={[
+              {
+                required: true,
+                message: "Please enter your password",
+              },
+            ]}
           >
-            <Input.Password />
+            <Input.Password
+              size="large"
+              placeholder="Enter your password"
+            />
           </Form.Item>
 
-          <Form.Item>
-            <Button type="primary" block htmlType="submit" loading={loading}>
+          <Form.Item style={{ marginTop: 20 }}>
+            <Button
+              type="primary"
+              htmlType="submit"
+              loading={loading}
+              block
+              size="large"
+            >
               Login
             </Button>
           </Form.Item>

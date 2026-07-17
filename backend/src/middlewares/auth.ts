@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from "express";
-import jwt from "jsonwebtoken";
+import jwt, { JwtPayload } from "jsonwebtoken";
 
 export interface AuthRequest extends Request {
   user?: {
@@ -8,38 +8,48 @@ export interface AuthRequest extends Request {
   };
 }
 
-const authMiddleware = (
+const JWT_SECRET = process.env.JWT_SECRET;
+
+if (!JWT_SECRET) {
+  throw new Error("JWT_SECRET is not defined in .env");
+}
+
+export default function authMiddleware(
   req: AuthRequest,
   res: Response,
   next: NextFunction
-) => {
+) {
+  const authHeader = req.headers.authorization;
+
+  if (!authHeader) {
+    return res.status(401).json({
+      success: false,
+      message: "No token provided",
+    });
+  }
+
+  if (!authHeader.startsWith("Bearer ")) {
+    return res.status(401).json({
+      success: false,
+      message: "Invalid authorization format",
+    });
+  }
+
+  const token = authHeader.substring(7);
+
   try {
-    const header = req.headers.authorization;
-
-    if (!header) {
-      return res.status(401).json({ error: "No token provided" });
-    }
-
-    const token = header.split(" ")[1];
-
-    if (!token) {
-      return res.status(401).json({ error: "Invalid token format" });
-    }
-
-    const decoded = jwt.verify(
-      token,
-      process.env.JWT_ACCESS_SECRET || "test_access_secret"
-    ) as any;
+    const decoded = jwt.verify(token, JWT_SECRET) as JwtPayload;
 
     req.user = {
-      id: decoded.sub,
-      role: decoded.role,
+      id: decoded.sub as string,
+      role: decoded.role as string,
     };
 
     next();
-  } catch (err) {
-    return res.status(401).json({ error: "Unauthorized / Invalid token" });
+  } catch (error) {
+    return res.status(401).json({
+      success: false,
+      message: "Invalid or expired token",
+    });
   }
-};
-
-export default authMiddleware;
+}

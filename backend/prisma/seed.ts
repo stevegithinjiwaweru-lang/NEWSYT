@@ -1,22 +1,29 @@
 import {
-  UserRole,
   ConnectorType,
   MerchantStatus,
-  PaymentType,
   OrderStatus,
+  PaymentType,
   RiderStatus,
+  UserRole,
 } from "@prisma/client";
 import bcrypt from "bcrypt";
 import { prisma } from "../src/prisma";
 
 async function createAdmin() {
   const phone = "0700000000";
-  const existing = await prisma.user.findUnique({ where: { phone } });
-  if (existing) return existing;
+
+  const existing = await prisma.user.findUnique({
+    where: { phone },
+  });
+
+  if (existing) {
+    console.log("✅ Admin already exists");
+    return existing;
+  }
 
   return prisma.user.create({
     data: {
-      name: "Admin",
+      name: "System Administrator",
       phone,
       passwordHash: await bcrypt.hash("password123", 10),
       role: UserRole.ADMIN,
@@ -24,8 +31,14 @@ async function createAdmin() {
   });
 }
 
-async function createMerchant(name: string, connector: ConnectorType) {
-  const existing = await prisma.merchant.findFirst({ where: { name } });
+async function createMerchant(
+  name: string,
+  connector: ConnectorType
+) {
+  const existing = await prisma.merchant.findFirst({
+    where: { name },
+  });
+
   if (existing) return existing;
 
   return prisma.merchant.create({
@@ -37,17 +50,21 @@ async function createMerchant(name: string, connector: ConnectorType) {
   });
 }
 
-async function createRiderUser(
-  phone: string,
+async function createRider(
   name: string,
+  phone: string,
   bikeReg: string
 ) {
-  const existingUser = await prisma.user.findUnique({ where: { phone } });
+  const existingUser = await prisma.user.findUnique({
+    where: { phone },
+  });
+
   if (existingUser) {
-    const rider = await prisma.rider.findUnique({
+    const rider = await prisma.rider.findFirst({
       where: { userId: existingUser.id },
     });
-    return { user: existingUser, rider };
+
+    return rider;
   }
 
   const user = await prisma.user.create({
@@ -59,7 +76,7 @@ async function createRiderUser(
     },
   });
 
-  const rider = await prisma.rider.create({
+  return prisma.rider.create({
     data: {
       userId: user.id,
       name,
@@ -68,84 +85,87 @@ async function createRiderUser(
       status: RiderStatus.AVAILABLE,
     },
   });
-
-  return { user, rider };
 }
 
 async function main() {
-  const isProduction = process.env.NODE_ENV === "production";
-  
-  console.log("🌱 Seeding database...");
-  console.log(`📍 Environment: ${process.env.NODE_ENV || "development"}`);
+  console.log("🌱 Seeding Easybox database...");
 
-  // Always create admin in any environment
   await createAdmin();
-  console.log("✅ Admin ready (0700000000 / password123)");
 
-  // Only create test merchants and riders in development
-  if (isProduction) {
-    console.log("⚠️  Skipping test data creation in production");
-    return;
+  const carrefour = await createMerchant(
+    "Carrefour",
+    ConnectorType.CSV
+  );
+
+  const naivas = await createMerchant(
+    "Naivas",
+    ConnectorType.CSV
+  );
+
+  const zuchinni = await createMerchant(
+    "Zuchinni",
+    ConnectorType.API
+  );
+
+  const rider1 = await createRider(
+    "James Kariuki",
+    "0712345678",
+    "KMCG123A"
+  );
+
+  const rider2 = await createRider(
+    "Peter Mwangi",
+    "0720456789",
+    "KMDU456B"
+  );
+
+  const orderCount = await prisma.order.count();
+
+  if (orderCount === 0) {
+    await prisma.order.createMany({
+      data: [
+        {
+          merchantId: carrefour.id,
+          customerName: "John Kamau",
+          phone: "0711000001",
+          address: "Garden Estate",
+          amount: 1250,
+          paymentType: PaymentType.COD,
+          status: OrderStatus.NEW,
+        },
+        {
+          merchantId: naivas.id,
+          customerName: "Mary Wanjiku",
+          phone: "0711000002",
+          address: "Roysambu",
+          amount: 890,
+          paymentType: PaymentType.COD,
+          status: OrderStatus.NEW,
+        },
+        {
+          merchantId: zuchinni.id,
+          customerName: "Peter Otieno",
+          phone: "0711000003",
+          address: "Kilimani",
+          amount: 2400,
+          paymentType: PaymentType.PREPAID,
+          status: OrderStatus.ASSIGNED,
+          riderId: rider1?.id,
+        },
+      ],
+    });
   }
 
-  const carrefour = await createMerchant("Carrefour", ConnectorType.CSV);
-  const naivas = await createMerchant("Naivas", ConnectorType.CSV);
-  const zuch = await createMerchant("Zuchinni", ConnectorType.API);
-
-  const { rider: rider1 } = await createRiderUser(
-    "0712345678",
-    "James Kariuki",
-    "KMCG 123A"
-  );
-  const { rider: rider2 } = await createRiderUser(
-    "0720456789",
-    "Peter Mwangi",
-    "KMDU 456B"
-  );
-
-  console.log("✅ Riders ready (0712345678 / 0720456789 — password: 123456)");
-
-  // Create test orders only in development
-  await prisma.order.createMany({
-    data: [
-      {
-        merchantId: carrefour.id,
-        customerName: "John Kamau",
-        phone: "0711000001",
-        address: "Garden Estate, Thika Rd",
-        amount: 1250,
-        paymentType: PaymentType.COD,
-        status: OrderStatus.NEW,
-      },
-      {
-        merchantId: naivas.id,
-        customerName: "Mary Wanjiku",
-        phone: "0711000002",
-        address: "Roysambu",
-        amount: 850,
-        paymentType: PaymentType.COD,
-        status: OrderStatus.NEW,
-      },
-      {
-        merchantId: zuch.id,
-        customerName: "Peter Otieno",
-        phone: "0711000003",
-        address: "Kilimani",
-        amount: 2450,
-        paymentType: PaymentType.PREPAID,
-        status: OrderStatus.ASSIGNED,
-        riderId: rider1.id,
-      },
-    ],
-    skipDuplicates: true,
-  });
-
-  console.log("🎉 Seeding complete");
+  console.log("✅ Admin created");
+  console.log("✅ Merchants created");
+  console.log("✅ Riders created");
+  console.log("✅ Orders created");
+  console.log("🎉 Database seeded successfully");
 }
 
 main()
-  .catch((e) => {
-    console.error("❌ Seed error:", e);
+  .catch((error) => {
+    console.error(error);
     process.exit(1);
   })
   .finally(async () => {

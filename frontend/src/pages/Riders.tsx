@@ -11,22 +11,42 @@ import {
   message,
   Spin,
 } from "antd";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import client from "../api/client";
 
-const fetchRiders = async () => (await client.get("/riders")).data;
+interface Rider {
+  id: string;
+  name: string;
+  phone: string;
+  bikeReg?: string;
+  status: string;
+}
+
+const fetchRiders = async () => {
+  const response = await client.get("/riders");
+  return response.data;
+};
 
 const Riders: React.FC = () => {
+  const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [form] = Form.useForm();
 
-  const { data, isLoading, refetch } = useQuery({
+  const { data, isLoading } = useQuery({
     queryKey: ["riders"],
     queryFn: fetchRiders,
   });
 
-  const riders = data?.riders || [];
+  const riders: Rider[] = Array.isArray(data)
+    ? data
+    : Array.isArray(data?.items)
+    ? data.items
+    : Array.isArray(data?.riders)
+    ? data.riders
+    : Array.isArray(data?.data)
+    ? data.data
+    : [];
 
   // CREATE RIDER
   const addRider = async (vals: any) => {
@@ -44,7 +64,8 @@ const Riders: React.FC = () => {
       message.success("Rider created");
       form.resetFields();
       setOpen(false);
-      refetch();
+
+      queryClient.invalidateQueries({ queryKey: ["riders"] });
 
       if (tempPassword) {
         Modal.info({
@@ -77,9 +98,9 @@ const Riders: React.FC = () => {
     try {
       await client.delete(`/riders/${id}`);
       message.success("Rider removed");
-      refetch();
-    } catch {
-      message.error("Failed to delete rider");
+      queryClient.invalidateQueries({ queryKey: ["riders"] });
+    } catch (err: any) {
+      message.error(err?.response?.data?.error || "Failed to delete rider");
     }
   };
 
@@ -105,7 +126,7 @@ const Riders: React.FC = () => {
         ) : (
           <List
             dataSource={riders}
-            renderItem={(r: any) => (
+            renderItem={(r: Rider) => (
               <List.Item
                 actions={[
                   <Button

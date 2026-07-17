@@ -33,8 +33,17 @@ const Dashboard: React.FC = () => {
   // =====================
   // SAFE NORMALIZATION
   // =====================
-  const orders = ordersData?.orders || ordersData?.data || [];
-  const merchants = merchantsData?.merchants || merchantsData?.data || [];
+  const orders = Array.isArray(ordersData?.items)
+    ? ordersData.items
+    : [];
+  const merchants = Array.isArray(merchantsData?.items)
+    ? merchantsData.items
+    : [];
+
+  console.log("Orders Response:", ordersData);
+  console.log("Merchants Response:", merchantsData);
+  console.log("Orders:", orders);
+  console.log("Merchants:", merchants);
 
   const delivered = orders.filter(
     (o: any) => o.status === "DELIVERED"

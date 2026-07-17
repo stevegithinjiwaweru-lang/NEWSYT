@@ -1,10 +1,15 @@
 import jwt, { SignOptions } from "jsonwebtoken";
 
-const ACCESS_SECRET =
-  process.env.JWT_ACCESS_SECRET || "test_access_secret";
+const ACCESS_SECRET = process.env.JWT_SECRET;
+const REFRESH_SECRET = process.env.REFRESH_TOKEN_SECRET;
 
-const REFRESH_SECRET =
-  process.env.JWT_REFRESH_SECRET || "test_refresh_secret";
+if (!ACCESS_SECRET) {
+  throw new Error("JWT_SECRET is missing in .env");
+}
+
+if (!REFRESH_SECRET) {
+  throw new Error("REFRESH_TOKEN_SECRET is missing in .env");
+}
 
 export interface JwtPayload {
   sub: string;
@@ -13,34 +18,27 @@ export interface JwtPayload {
   exp?: number;
 }
 
-// ------------------
-// ACCESS TOKEN
-// ------------------
-export const signAccessToken = (payload: object): string => {
+export function signAccessToken(payload: {
+  sub: string;
+  role?: string;
+}) {
   return jwt.sign(payload, ACCESS_SECRET, {
-    expiresIn: (process.env.JWT_ACCESS_EXPIRES_IN as any) || "15m",
+    expiresIn: "15m",
   } as SignOptions);
-};
+}
 
-// ------------------
-// REFRESH TOKEN
-// ------------------
-export const signRefreshToken = (payload: object): string => {
+export function signRefreshToken(payload: {
+  sub: string;
+}) {
   return jwt.sign(payload, REFRESH_SECRET, {
-    expiresIn: (process.env.JWT_REFRESH_EXPIRES_IN as any) || "7d",
+    expiresIn: "7d",
   } as SignOptions);
-};
+}
 
-// ------------------
-// VERIFY ACCESS
-// ------------------
-export const verifyAccessToken = (token: string): JwtPayload => {
+export function verifyAccessToken(token: string): JwtPayload {
   return jwt.verify(token, ACCESS_SECRET) as JwtPayload;
-};
+}
 
-// ------------------
-// VERIFY REFRESH
-// ------------------
-export const verifyRefreshToken = (token: string): JwtPayload => {
+export function verifyRefreshToken(token: string): JwtPayload {
   return jwt.verify(token, REFRESH_SECRET) as JwtPayload;
-};
+}

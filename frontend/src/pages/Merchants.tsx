@@ -4,47 +4,46 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import client from "../api/client";
 
 const fetchMerchants = async () => {
-  const token = localStorage.getItem("accessToken");
+  const { data } = await client.get("/merchants");
 
-  const { data } = await client.get("/merchants", {
-    headers: {
-      Authorization: `Bearer ${token}`,
-    },
-  });
+  console.log("MERCHANT RESPONSE:", data);
 
-  return data;
+  return Array.isArray(data?.items)
+    ? data.items
+    : [];
 };
 
 const Merchants: React.FC = () => {
   const queryClient = useQueryClient();
 
-  const { data, isLoading } = useQuery({
+  const {
+    data: merchants = [],
+    isLoading,
+    isError,
+    error,
+  } = useQuery({
     queryKey: ["merchants"],
     queryFn: fetchMerchants,
   });
 
-  const merchants = data?.merchants || [];
+  console.log("Merchants:", merchants);
 
   const syncMerchant = async (id: string) => {
-    const token = localStorage.getItem("accessToken");
-
     try {
-      await client.post(
-        `/merchants/${id}/sync`,
-        {},
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        }
-      );
+      await client.post(`/merchants/${id}/sync`);
 
       message.success("Merchant synced successfully");
 
-      queryClient.invalidateQueries({ queryKey: ["merchants"] });
+      queryClient.invalidateQueries({
+        queryKey: ["merchants"],
+      });
     } catch (err: any) {
+      console.error(err);
+
       message.error(
-        err?.response?.data?.error || "Sync failed"
+        err?.response?.data?.message ||
+          err?.response?.data?.error ||
+          "Sync failed"
       );
     }
   };
@@ -57,14 +56,29 @@ const Merchants: React.FC = () => {
     );
   }
 
+  if (isError) {
+    return (
+      <div style={{ padding: 20 }}>
+        <h3>Failed to load merchants</h3>
+
+        <pre style={{ color: "red" }}>
+          {JSON.stringify(error, null, 2)}
+        </pre>
+      </div>
+    );
+  }
+
   return (
     <div>
       <h2>Merchants & Integrations</h2>
 
-      <div style={{ marginTop: 12 }}>
+      <div style={{ marginTop: 20 }}>
         {merchants.length > 0 ? (
           merchants.map((m: any) => (
-            <Card key={m.id} style={{ marginBottom: 12 }}>
+            <Card
+              key={m.id}
+              style={{ marginBottom: 16 }}
+            >
               <div
                 style={{
                   display: "flex",
@@ -72,36 +86,53 @@ const Merchants: React.FC = () => {
                   alignItems: "center",
                 }}
               >
-                {/* LEFT */}
                 <div>
-                  <div style={{ fontWeight: 700 }}>
-                    {m.name}
+                  <div
+                    style={{
+                      fontWeight: 700,
+                      fontSize: 16,
+                    }}
+                  >
+                    {m?.name}
                   </div>
 
-                  <div style={{ color: "#888", fontSize: 13 }}>
-                    {m.connector} • Last sync:{" "}
-                    {m.lastSyncAt
+                  <div
+                    style={{
+                      color: "#777",
+                      marginTop: 4,
+                    }}
+                  >
+                    Connector: {m?.connector || "N/A"}
+                  </div>
+
+                  <div
+                    style={{
+                      color: "#777",
+                      marginTop: 4,
+                    }}
+                  >
+                    Last Sync:{" "}
+                    {m?.lastSyncAt
                       ? new Date(m.lastSyncAt).toLocaleString()
-                      : "n/a"}
+                      : "Never"}
                   </div>
                 </div>
 
-                {/* RIGHT */}
                 <div
                   style={{
                     display: "flex",
-                    gap: 8,
+                    gap: 12,
                     alignItems: "center",
                   }}
                 >
                   <Tag
                     color={
-                      m.status === "CONNECTED"
+                      m?.status === "CONNECTED"
                         ? "green"
-                        : "red"
+                        : "orange"
                     }
                   >
-                    {m.status}
+                    {m?.status || "UNKNOWN"}
                   </Tag>
 
                   <Button
@@ -115,7 +146,22 @@ const Merchants: React.FC = () => {
             </Card>
           ))
         ) : (
-          <div>No merchants found</div>
+          <Card>
+            <div
+              style={{
+                textAlign: "center",
+                padding: "30px 0",
+              }}
+            >
+              <h3>No merchants found</h3>
+
+              <p>
+                Check the browser console for the
+                <strong> MERCHANT RESPONSE </strong>
+                log to see what the backend returned.
+              </p>
+            </div>
+          </Card>
         )}
       </div>
     </div>

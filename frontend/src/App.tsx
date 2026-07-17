@@ -20,10 +20,10 @@ const App: React.FC = () => {
   return (
     <AntdThemeProvider>
       <Routes>
-        {/* Public */}
+        {/* Public Routes */}
         <Route path="/login" element={<Login />} />
 
-        {/* Protected App */}
+        {/* Protected Routes */}
         <Route
           path="/"
           element={
@@ -32,7 +32,7 @@ const App: React.FC = () => {
             </ProtectedRoute>
           }
         >
-          <Route index element={<Navigate to="dashboard" replace />} />
+          <Route index element={<Navigate to="/dashboard" replace />} />
 
           <Route path="dashboard" element={<Dashboard />} />
           <Route path="orders" element={<Orders />} />
@@ -44,15 +44,8 @@ const App: React.FC = () => {
           <Route path="settings" element={<Settings />} />
         </Route>
 
-        {/* 404 */}
-        <Route
-          path="*"
-          element={
-            <div style={{ padding: 24, textAlign: "center" }}>
-              Page not found
-            </div>
-          }
-        />
+        {/* Redirect unknown routes */}
+        <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>
     </AntdThemeProvider>
   );

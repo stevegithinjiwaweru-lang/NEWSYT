@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import {
   Card,
   Table,
@@ -10,350 +10,196 @@ import {
   message,
   Tag,
   Spin,
-  Alert,
-  Tooltip,
   Empty,
+  Row,
+  Col,
+  Typography,
 } from "antd";
-import { LockOutlined } from "@ant-design/icons";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import client from "../api/client";
 
+const { Title } = Typography;
+
+interface Order {
+  id: string;
+  merchant?: { name: string };
+  customerName: string;
+  phone: string;
+  address: string;
+  amount: number;
+  status: string;
+  rider?: { name: string };
+}
+
+interface Rider {
+  id: string;
+  name: string;
+  phone: string;
+  status: "AVAILABLE" | "BUSY" | "OFFLINE";
+}
+
+const normalizeArray = (response: any): any[] => {
+  if (Array.isArray(response)) return response;
+  if (Array.isArray(response?.items)) return response.items;
+  if (Array.isArray(response?.orders)) return response.orders;
+  if (Array.isArray(response?.riders)) return response.riders;
+  if (Array.isArray(response?.data)) return response.data;
+  return [];
+};
+
 const fetchOrders = async () => {
-  const { data } = await client.get("/orders");
+  const token = localStorage.getItem("accessToken");
+  const { data } = await client.get("/orders", { headers: { Authorization: `Bearer ${token}` } });
   return data;
 };
 
 const fetchRiders = async () => {
-  const { data } = await client.get("/riders");
+  const token = localStorage.getItem("accessToken");
+  const { data } = await client.get("/riders", { headers: { Authorization: `Bearer ${token}` } });
   return data;
 };
 
 const Dispatch: React.FC = () => {
   const queryClient = useQueryClient();
-  const [selectedOrder, setSelectedOrder] = useState<any>(null);
-  const [selectedRider, setSelectedRider] = useState<string | null>(null);
+  const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
+  const [selectedRiderId, setSelectedRiderId] = useState<string | null>(null);
 
-  // =====================
-  // DATA QUERIES
-  // =====================
   const { data: ordersData, isLoading: ordersLoading } = useQuery({
     queryKey: ["orders"],
     queryFn: fetchOrders,
-    refetchInterval: 3000,
+    refetchInterval: 15000,
   });
 
   const { data: ridersData, isLoading: ridersLoading } = useQuery({
     queryKey: ["riders"],
     queryFn: fetchRiders,
-    refetchInterval: 5000,
+    refetchInterval: 10000,
   });
 
-  // =====================
-  // SAFE NORMALIZATION
-  // =====================
-  const orders = ordersData?.orders || ordersData?.data || [];
-  const riders = ridersData?.riders || ridersData?.data || [];
+  const orders: Order[] = normalizeArray(ordersData);
+  const riders: Rider[] = normalizeArray(ridersData);
 
-  // =====================
-  // RESTRICTED MERCHANTS (CSV-SYNCED, NO MANUAL ASSIGNMENT)
-  // =====================
-  const RESTRICTED_MERCHANTS = ["Naivas", "Carrefour", "naivas", "carrefour"];
+  const pendingOrders = orders.filter((o) => o.status === "NEW");
+  const availableRiders = riders.filter((r) => r.status === "AVAILABLE");
 
-  const isOrderFromRestrictedMerchant = (order: any) => {
-    const merchantName = order.merchant?.name || "";
-    return RESTRICTED_MERCHANTS.some((restricted) =>
-      merchantName.toLowerCase().includes(restricted.toLowerCase())
-    );
-  };
-
-  // =====================
-  // FILTER ONLY ASSIGNABLE ORDERS (NEW status + NOT from restricted merchants)
-  // =====================
-  const assignableOrders = orders.filter(
-    (o: any) => o.status === "NEW" && !isOrderFromRestrictedMerchant(o)
-  );
-
-  const restrictedOrders = orders.filter(
-    (o: any) => o.status === "NEW" && isOrderFromRestrictedMerchant(o)
-  );
-
-  // =====================
-  // ASSIGN RIDER
-  // =====================
-  const handleAssign = async () => {
-    if (!selectedOrder || !selectedRider) {
-      message.warning("Please select both an order and a rider");
-      return;
-    }
-
-    if (isOrderFromRestrictedMerchant(selectedOrder)) {
-      message.error(
-        `Orders from ${selectedOrder.merchant?.name} cannot be manually assigned. They sync from their own system.`
-      );
-      return;
-    }
+  const handleAssignRider = async () => {
+    if (!selectedOrder || !selectedRiderId) return;
 
     try {
-      await client.patch(`/orders/${selectedOrder.id}/assign`, {
-        riderId: selectedRider,
+      await client.post(`/orders/${selectedOrder.id}/assign`, {
+        riderId: selectedRiderId,
       });
 
-      message.success(
-        `Order assigned to rider ${riders.find((r: any) => r.id === selectedRider)?.name}`
-      );
-
+      message.success(`Order ${selectedOrder.id} assigned successfully`);
       setSelectedOrder(null);
-      setSelectedRider(null);
+      setSelectedRiderId(null);
 
       queryClient.invalidateQueries({ queryKey: ["orders"] });
       queryClient.invalidateQueries({ queryKey: ["riders"] });
     } catch (err: any) {
-      message.error(err?.response?.data?.error || "Assignment failed");
+      message.error(err?.response?.data?.error || "Failed to assign rider");
     }
   };
 
-  // =====================
-  // TABLE COLUMNS
-  // =====================
   const columns = [
+    { title: "Order ID", dataIndex: "id", key: "id", width: 130 },
+    { title: "Merchant", dataIndex: ["merchant", "name"], key: "merchant" },
+    { title: "Customer", dataIndex: "customerName", key: "customer" },
+    { title: "Phone", dataIndex: "phone", key: "phone", width: 130 },
+    { title: "Amount", dataIndex: "amount", key: "amount", render: (amt: number) => `KSh ${amt.toLocaleString()}` },
     {
-      title: "Order ID",
-      dataIndex: "id",
-      key: "id",
-      width: 120,
-    },
-    {
-      title: "Merchant",
-      render: (_: any, record: any) => {
-        const merchantName = record.merchant?.name || "N/A";
-        const isRestricted = isOrderFromRestrictedMerchant(record);
-        return (
-          <div>
-            {merchantName}
-            {isRestricted && (
-              <Tag color="red" style={{ marginLeft: 8 }}>
-                <LockOutlined /> Auto-Sync
-              </Tag>
-            )}
-          </div>
-        );
-      },
-    },
-    {
-      title: "Customer",
-      dataIndex: "customerName",
-      key: "customerName",
-    },
-    {
-      title: "Phone",
-      dataIndex: "phone",
-      key: "phone",
-      width: 120,
-    },
-    {
-      title: "Amount",
-      dataIndex: "amount",
-      key: "amount",
-      render: (v: number) => `KSh ${v.toLocaleString()}`,
-      width: 120,
-    },
-    {
-      title: "Status",
-      dataIndex: "status",
-      key: "status",
-      render: (status: string) => (
-        <Tag
-          color={
-            status === "DELIVERED"
-              ? "green"
-              : status === "ASSIGNED"
-              ? "orange"
-              : "blue"
-          }
-        >
-          {status}
-        </Tag>
-      ),
-      width: 100,
+      title: "Current Rider",
+      key: "currentRider",
+      render: (_: any, record: Order) => record.rider?.name || <span style={{ color: "#999" }}>Not Assigned</span>,
     },
     {
       title: "Action",
       key: "action",
-      render: (_: any, record: any) => {
-        const isRestricted = isOrderFromRestrictedMerchant(record);
-        return isRestricted ? (
-          <Tooltip title="This order is managed by the merchant's system and cannot be manually assigned">
-            <Button type="primary" disabled>
-              Assign Rider
-            </Button>
-          </Tooltip>
-        ) : (
-          <Button type="primary" onClick={() => setSelectedOrder(record)}>
-            Assign Rider
-          </Button>
-        );
-      },
-      width: 140,
+      render: (_: any, record: Order) => (
+        <Button type="primary" onClick={() => setSelectedOrder(record)}>
+          Assign Rider
+        </Button>
+      ),
     },
   ];
 
   if (ordersLoading || ridersLoading) {
-    return (
-      <div style={{ textAlign: "center", marginTop: 80 }}>
-        <Spin size="large" />
-      </div>
-    );
+    return <Spin size="large" style={{ display: "block", margin: "120px auto" }} />;
   }
 
   return (
     <div>
-      <h2>Dispatch Center</h2>
+      <Title level={2}>Dispatch Center</Title>
 
-      {/* INFO ALERTS */}
-      {restrictedOrders.length > 0 && (
-        <Alert
-          message={`${restrictedOrders.length} order(s) from Naivas/Carrefour cannot be assigned`}
-          description="These are auto-synced from the merchant's system. They will be managed via their own rider app."
-          type="warning"
-          showIcon
-          closable
-          style={{ marginBottom: 16 }}
-        />
-      )}
+      <Row gutter={[16, 16]}>
+        {/* Left: Pending Orders */}
+        <Col xs={24} lg={16}>
+          <Card title={`New Orders Awaiting Dispatch (${pendingOrders.length})`} bordered={false}>
+            {pendingOrders.length > 0 ? (
+              <Table
+                columns={columns}
+                dataSource={pendingOrders}
+                rowKey="id"
+                pagination={{ pageSize: 10 }}
+                scroll={{ x: 900 }}
+              />
+            ) : (
+              <Empty description="No new orders pending dispatch" />
+            )}
+          </Card>
+        </Col>
 
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "2fr 1fr",
-          gap: 16,
-          marginTop: 12,
-        }}
-      >
-        {/* ORDERS */}
-        <Card>
-          <div style={{ fontWeight: 700, marginBottom: 12, fontSize: 16 }}>
-            Available Orders ({assignableOrders.length})
-          </div>
+        {/* Right: Available Riders */}
+        <Col xs={24} lg={8}>
+          <Card title={`Available Riders (${availableRiders.length})`} bordered={false}>
+            {availableRiders.length > 0 ? (
+              <List
+                dataSource={availableRiders}
+                renderItem={(rider: Rider) => (
+                  <List.Item
+                    key={rider.id}
+                    onClick={() => setSelectedRiderId(rider.id)}
+                    style={{
+                      cursor: "pointer",
+                      backgroundColor: selectedRiderId === rider.id ? "#e6f7ff" : "transparent",
+                      borderRadius: 6,
+                    }}
+                  >
+                    <List.Item.Meta
+                      avatar={<Avatar style={{ backgroundColor: "#52c41a" }}>{rider.name.charAt(0)}</Avatar>}
+                      title={rider.name}
+                      description={rider.phone}
+                    />
+                    <Tag color="green">AVAILABLE</Tag>
+                  </List.Item>
+                )}
+              />
+            ) : (
+              <Empty description="No riders currently available" />
+            )}
+          </Card>
+        </Col>
+      </Row>
 
-          {assignableOrders.length === 0 ? (
-            <Empty description="No orders available for assignment" />
-          ) : (
-            <Table
-              dataSource={assignableOrders}
-              columns={columns as any}
-              rowKey="id"
-              pagination={{ pageSize: 8 }}
-              size="small"
-              scroll={{ x: 800 }}
-            />
-          )}
-        </Card>
-
-        {/* RIDERS */}
-        <Card>
-          <div style={{ fontWeight: 700, marginBottom: 12, fontSize: 16 }}>
-            Available Riders ({riders.filter((r: any) => r.status === "AVAILABLE").length})
-          </div>
-
-          {riders.length === 0 ? (
-            <Empty description="No riders available" />
-          ) : (
-            <List
-              dataSource={riders}
-              renderItem={(r: any) => (
-                <List.Item
-                  actions={[
-                    <Tag
-                      color={
-                        r.status === "AVAILABLE" ? "green" : "orange"
-                      }
-                    >
-                      {r.status}
-                    </Tag>,
-                  ]}
-                  style={{
-                    padding: 12,
-                    backgroundColor:
-                      selectedRider === r.id ? "#e6f7ff" : "transparent",
-                    cursor: "pointer",
-                    borderRadius: 4,
-                  }}
-                  onClick={() => setSelectedRider(r.id)}
-                >
-                  <List.Item.Meta
-                    avatar={
-                      <Avatar
-                        style={{
-                          backgroundColor:
-                            selectedRider === r.id ? "#1890ff" : "#87d068",
-                        }}
-                      >
-                        {r.name?.charAt(0) || "R"}
-                      </Avatar>
-                    }
-                    title={<strong>{r.name}</strong>}
-                    description={`${r.phone}${
-                      r.bikeReg ? ` • ${r.bikeReg}` : ""
-                    }`}
-                  />
-                </List.Item>
-              )}
-            />
-          )}
-        </Card>
-      </div>
-
-      {/* ASSIGN MODAL */}
+      {/* Assignment Confirmation Modal */}
       <Modal
-        title="Assign Order to Rider"
+        title="Assign Rider to Order"
         open={!!selectedOrder}
         onCancel={() => {
           setSelectedOrder(null);
-          setSelectedRider(null);
+          setSelectedRiderId(null);
         }}
-        onOk={handleAssign}
-        okText="Assign Order"
-        width={500}
+        onOk={handleAssignRider}
+        okText="Confirm Assignment"
+        okButtonProps={{ disabled: !selectedRiderId }}
+        width={480}
       >
         {selectedOrder && (
           <div>
-            <div style={{ marginBottom: 16, padding: 12, backgroundColor: "#f0f2f5", borderRadius: 4 }}>
-              <p>
-                <b>Order ID:</b> {selectedOrder.id}
-              </p>
-              <p>
-                <b>Merchant:</b> {selectedOrder.merchant?.name}
-              </p>
-              <p>
-                <b>Customer:</b> {selectedOrder.customerName}
-              </p>
-              <p>
-                <b>Phone:</b> {selectedOrder.phone}
-              </p>
-              <p>
-                <b>Amount:</b> KSh {selectedOrder.amount.toLocaleString()}
-              </p>
-            </div>
-
-            <div style={{ marginBottom: 12 }}>
-              <label style={{ display: "block", marginBottom: 8, fontWeight: 600 }}>
-                Select Rider
-              </label>
-              <Select
-                style={{ width: "100%" }}
-                placeholder="Choose a rider"
-                value={selectedRider || undefined}
-                onChange={setSelectedRider}
-              >
-                {riders
-                  .filter((r: any) => r.status === "AVAILABLE")
-                  .map((r: any) => (
-                    <Select.Option key={r.id} value={r.id}>
-                      {r.name} — {r.phone}
-                    </Select.Option>
-                  ))}
-              </Select>
-            </div>
+            <p><strong>Order ID:</strong> {selectedOrder.id}</p>
+            <p><strong>Customer:</strong> {selectedOrder.customerName}</p>
+            <p><strong>Destination:</strong> {selectedOrder.address}</p>
+            <p><strong>Amount:</strong> KSh {selectedOrder.amount.toLocaleString()}</p>
           </div>
         )}
       </Modal>

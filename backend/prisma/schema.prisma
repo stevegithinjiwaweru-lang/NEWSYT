@@ -14,83 +14,100 @@ model User {
   email         String?        @unique
   passwordHash  String
   role          UserRole       @default(DISPATCHER)
+
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
-  refreshTokens RefreshToken[]
+
   rider         Rider?
+  refreshTokens RefreshToken[]
 }
 
 model Rider {
-  id         String      @id @default(cuid())
-  name       String
-  phone      String
-  nationalId String?
-  bikeReg    String?
-  branch     String?
-  status     RiderStatus @default(AVAILABLE)
-  lastLat    Float?
-  lastLng    Float?
-  lastSeenAt DateTime?
-  userId     String?     @unique
-  createdAt  DateTime    @default(now())
-  updatedAt  DateTime    @updatedAt
-  orders     Order[]
-  user       User?       @relation(fields: [userId], references: [id])
+  id            String       @id @default(cuid())
+  userId        String?      @unique
+
+  name          String
+  phone         String
+  nationalId    String?
+  bikeReg       String?
+  branch        String?
+
+  status        RiderStatus  @default(AVAILABLE)
+
+  lastLat       Float?
+  lastLng       Float?
+  lastSeenAt    DateTime?
+
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  user          User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  orders        Order[]
 }
 
 model Merchant {
-  id         String         @id @default(cuid())
-  name       String
-  connector  ConnectorType
-  status     MerchantStatus @default(CONNECTED)
-  config     Json?
-  lastSyncAt DateTime?
-  createdAt  DateTime       @default(now())
-  updatedAt  DateTime       @updatedAt
-  orders     Order[]
+  id            String          @id @default(cuid())
+
+  name          String          @unique
+
+  connector     ConnectorType
+
+  status        MerchantStatus  @default(CONNECTED)
+
+  config        Json?
+
+  lastSyncAt    DateTime?
+
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  orders        Order[]
 }
 
 model Order {
-  id           String      @id @default(cuid())
-  externalId   String?     @unique
-  merchantId   String
-  customerName String
-  phone        String
-  address      String
-  lat          Float?
-  lng          Float?
-  amount       Float
-  paymentType  PaymentType @default(COD)
-  status       OrderStatus @default(NEW)
-  riderId      String?
-  attemptCount Int         @default(0)
-  podUrl       String?
-  createdAt    DateTime    @default(now())
-  updatedAt    DateTime    @updatedAt
-  merchant     Merchant    @relation(fields: [merchantId], references: [id], onDelete: Cascade)
-  rider        Rider?      @relation(fields: [riderId], references: [id])
+  id             String        @id @default(cuid())
+
+  externalId     String?       @unique
+
+  merchantId     String
+  riderId        String?
+
+  customerName   String
+  phone          String
+  address        String
+
+  lat            Float?
+  lng            Float?
+
+  amount         Float
+
+  paymentType    PaymentType   @default(COD)
+
+  status         OrderStatus   @default(NEW)
+
+  attemptCount   Int           @default(0)
+
+  podUrl         String?
+
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  merchant       Merchant      @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  rider          Rider?        @relation(fields: [riderId], references: [id], onDelete: SetNull)
 }
 
 model RefreshToken {
-  id        String   @id @default(cuid())
-  token     String   @unique
-  userId    String
-  expiresAt DateTime
-  createdAt DateTime @default(now())
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-}
+  id          String      @id @default(cuid())
 
-model Dispatch {
-  id                String   @id @default(cuid())
-  dispatchId        String   @unique
-  orderReference    String
-  status            String
-  riderId           String?
-  estimatedPickup   DateTime?
-  estimatedDelivery DateTime?
-  metadata          Json?
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  token       String      @unique
+
+  userId      String
+
+  expiresAt   DateTime
+
+  createdAt   DateTime    @default(now())
+
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 enum UserRole {
@@ -102,20 +119,20 @@ enum UserRole {
 enum RiderStatus {
   AVAILABLE
   BUSY
+  IN_DELIVERY
   OFFLINE
   SUSPENDED
-  IN_DELIVERY
+}
+
+enum MerchantStatus {
+  CONNECTED
+  DISCONNECTED
 }
 
 enum ConnectorType {
   CSV
   API
   APP
-}
-
-enum MerchantStatus {
-  CONNECTED
-  DISCONNECTED
 }
 
 enum PaymentType {

@@ -1,5 +1,5 @@
 import 'dotenv/config'
-import { Worker, QueueScheduler } from 'bullmq'
+import { Worker } from 'bullmq'
 import IORedis from 'ioredis'
 import fs from 'fs'
 import csv from 'fast-csv'
@@ -11,8 +11,6 @@ const connection = new IORedis({
 })
 
 const queueName = 'csv-import'
-
-new QueueScheduler(queueName, { connection })
 
 const worker = new Worker(
   queueName,

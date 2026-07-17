@@ -48,17 +48,21 @@ app.use(apiRateLimiter);
 app.use(requestLogger);
 
 // routes
-app.use("/auth", authRoutes);
-app.use("/orders", ordersRoutes);
-app.use("/riders", ridersRoutes);
-app.use("/merchants", merchantsRoutes);
-app.use("/v1/dispatches", dispatchRoutes);
+const api = express.Router();
+
+api.use("/auth", authRoutes);
+api.use("/orders", ordersRoutes);
+api.use("/riders", ridersRoutes);
+api.use("/merchants", merchantsRoutes);
+api.use("/dispatches", dispatchRoutes);
+
+app.use("/api", api);
 
 // swagger
 registerSwagger(app);
 
 // health
-app.get("/health", (_req, res) => {
+app.get("/api/health", (_req, res) => {
   res.json({
     ok: true,
     service: "easybox-api",
