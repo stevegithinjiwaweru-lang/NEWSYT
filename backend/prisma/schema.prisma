@@ -195,6 +195,7 @@ model Customer {
   phone        String?   @unique
   passwordHash String?
   isActive     Boolean   @default(true)
+  lastLogin    DateTime?
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
   addresses    SavedAddress[]
@@ -330,4 +331,17 @@ model SupportTicket {
   meta        Json?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @default(now())
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  actorId     String?
+  action      String
+  resource    String
+  resourceId  String?
+  prevValue   Json?
+  newValue    Json?
+  ip          String?
+  requestId   String?
+  createdAt   DateTime @default(now())
 }
