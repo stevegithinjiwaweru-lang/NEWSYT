@@ -114,13 +114,15 @@ model RefreshToken {
 
   token       String      @unique
 
-  userId      String
+  userId      String?
+  customerId  String?
 
   expiresAt   DateTime
 
   createdAt   DateTime    @default(now())
 
-  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user        User?       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  customer    Customer?   @relation(fields: [customerId], references: [id], onDelete: Cascade)
 }
 
 enum UserRole {
