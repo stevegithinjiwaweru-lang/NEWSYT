@@ -194,6 +194,7 @@ model Customer {
   email        String?   @unique
   phone        String?   @unique
   passwordHash String?
+  isActive     Boolean   @default(true)
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
   addresses    SavedAddress[]
@@ -256,7 +257,7 @@ model Wallet {
   currency     String    @default("KES")
   transactions WalletTransaction[]
   createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  updatedAt    DateTime @default(now())
 }
 
 model WalletTransaction {
@@ -281,7 +282,7 @@ model PricingRule {
   multiplier    Float    @default(1.0)
   conditions    Json?
   createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  updatedAt     DateTime @default(now())
 }
 
 model PromoCode {
@@ -294,7 +295,7 @@ model PromoCode {
   usageLimit    Int?
   expiresAt     DateTime?
   createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  updatedAt     DateTime @default(now())
 }
 
 model Notification {
@@ -328,5 +329,5 @@ model SupportTicket {
   assigneeId  String?
   meta        Json?
   createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  updatedAt   DateTime @default(now())
 }
