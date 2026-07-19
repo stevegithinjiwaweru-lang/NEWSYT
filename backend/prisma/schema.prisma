@@ -94,6 +94,19 @@ model Order {
 
   merchant       Merchant      @relation(fields: [merchantId], references: [id], onDelete: Cascade)
   rider          Rider?        @relation(fields: [riderId], references: [id], onDelete: SetNull)
+
+  // ----- Pick & Drop extensions (additive, nullable) -----
+  orderType      OrderType?    @default(STANDARD)
+  customerId     String?
+  pickupLat      Float?
+  pickupLng      Float?
+  dropoffLat     Float?
+  dropoffLng     Float?
+  distanceKm     Float?
+  estimatedFare  Float?
+  actualFare     Float?
+  promoCodeId    String?
+  timeline       Json?
 }
 
 model RefreshToken {
@@ -101,13 +114,15 @@ model RefreshToken {
 
   token       String      @unique
 
-  userId      String
+  userId      String?
+  customerId  String?
 
   expiresAt   DateTime
 
   createdAt   DateTime    @default(now())
 
-  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user        User?       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  customer    Customer?   @relation(fields: [customerId], references: [id], onDelete: Cascade)
 }
 
 enum UserRole {
@@ -148,4 +163,185 @@ enum OrderStatus {
   DELIVERED
   FAILED
   RETURNED
+}
+
+// -------------------- New enums and models for EasyBox V2 --------------------
+
+enum OrderType {
+  ENTERPRISE
+  PICK_DROP
+  STANDARD
+}
+
+enum PaymentMethod {
+  MPESA
+  CASH
+  CORPORATE
+  WALLET
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCESS
+  FAILED
+}
+
+model Customer {
+  id           String    @id @default(cuid())
+  userId       String?   @unique
+  firstName    String?
+  lastName     String?
+  email        String?   @unique
+  phone        String?   @unique
+  passwordHash String?
+  isActive     Boolean   @default(true)
+  lastLogin    DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  addresses    SavedAddress[]
+  orders       Order[]   @relation("customer_orders")
+  wallet       Wallet?
+  ratings      Rating[]
+}
+
+model SavedAddress {
+  id         String   @id @default(cuid())
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  customerId String
+  label      String?
+  address    String
+  lat        Float
+  lng        Float
+  createdAt  DateTime @default(now())
+}
+
+model Vehicle {
+  id          String   @id @default(cuid())
+  type        String   // MOTORCYCLE, TUKTUK, PICKUP, VAN
+  plateNumber String?
+  capacity    Int?
+  createdAt   DateTime @default(now())
+}
+
+model Trip {
+  id          String   @id @default(cuid())
+  order       Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderId     String
+  riderId     String?
+  startAt     DateTime?
+  endAt       DateTime?
+  distanceKm  Float?
+  durationMin Int?
+  events      Json?    // timeline of events
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Payment {
+  id              String        @id @default(cuid())
+  orderId         String?
+  order           Order?        @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  method          PaymentMethod
+  amount          Float
+  status          PaymentStatus @default(PENDING)
+  transactionRef  String?
+  callbackMeta    Json?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+}
+
+model Wallet {
+  id           String    @id @default(cuid())
+  ownerType    String    // "CUSTOMER" | "RIDER" | "DRIVER"
+  ownerId      String
+  balance      Float     @default(0)
+  currency     String    @default("KES")
+  transactions WalletTransaction[]
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime @default(now())
+}
+
+model WalletTransaction {
+  id          String   @id @default(cuid())
+  walletId    String
+  wallet      Wallet   @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  amount      Float
+  type        String   // CREDIT | DEBIT
+  meta        Json?
+  createdAt   DateTime @default(now())
+}
+
+model PricingRule {
+  id            String   @id @default(cuid())
+  name          String
+  baseFare      Float
+  perKm         Float
+  perMinute     Float
+  vehicleType   String?  // MOTORCYCLE, TUKTUK, PICKUP, VAN
+  packageSize   String?  // SMALL, MEDIUM, LARGE, FRAGILE, FOOD, ELECTRONICS
+  isSurgeActive Boolean  @default(false)
+  multiplier    Float    @default(1.0)
+  conditions    Json?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @default(now())
+}
+
+model PromoCode {
+  id            String   @id @default(cuid())
+  code          String   @unique
+  description   String?
+  discountType  String   // PERCENT | FIXED
+  amount        Float
+  active        Boolean  @default(true)
+  usageLimit    Int?
+  expiresAt     DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @default(now())
+}
+
+model Notification {
+  id         String   @id @default(cuid())
+  recipient  String   // user id / customer id / rider id
+  channel    String   // PUSH | SMS | EMAIL | SOCKET
+  title      String?
+  body       String?
+  meta       Json?
+  read       Boolean  @default(false)
+  createdAt  DateTime @default(now())
+}
+
+model Rating {
+  id         String   @id @default(cuid())
+  raterId    String
+  ratedId    String
+  score      Int
+  comment    String?
+  orderId    String?
+  order      Order?   @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  createdAt  DateTime @default(now())
+}
+
+model SupportTicket {
+  id          String   @id @default(cuid())
+  customerId  String?
+  subject     String
+  message     String
+  status      String   @default("OPEN")
+  assigneeId  String?
+  meta        Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @default(now())
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  actorId     String?
+  action      String
+  resource    String
+  resourceId  String?
+  prevValue   Json?
+  newValue    Json?
+  ip          String?
+  requestId   String?
+  createdAt   DateTime @default(now())
 }

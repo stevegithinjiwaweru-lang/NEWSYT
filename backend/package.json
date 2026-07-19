@@ -17,6 +17,7 @@
     "prisma:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
     "seed": "ts-node --transpile-only prisma/seed.ts",
+    "seed:pricing": "ts-node --transpile-only prisma/seedPricing.ts",
     "verify:build": "npm run build && node -c dist/index.js"
   },
   "prisma": {
