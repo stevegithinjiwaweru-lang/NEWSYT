@@ -31,6 +31,9 @@ model Rider {
   nationalId    String?
   bikeReg       String?
   branch        String?
+  
+  vehicleType   String?      // e.g., "motorcycle", "van", "bicycle"
+  vehiclePlate  String?
 
   status        RiderStatus  @default(AVAILABLE)
 
@@ -43,6 +46,7 @@ model Rider {
 
   user          User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
   orders        Order[]
+  dispatches    Dispatch[]
 }
 
 model Merchant {
@@ -88,12 +92,112 @@ model Order {
   attemptCount   Int           @default(0)
 
   podUrl         String?
+  
+  // Dispatch relationship
+  dispatch       Dispatch?
 
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
 
   merchant       Merchant      @relation(fields: [merchantId], references: [id], onDelete: Cascade)
   rider          Rider?        @relation(fields: [riderId], references: [id], onDelete: SetNull)
+}
+
+model Dispatch {
+  id             String         @id @default(cuid())
+  
+  // Easybox dispatch ID (returned from Easybox API)
+  easyboxId      String?        @unique
+  
+  // Order reference (Zucchini order ID)
+  orderReference String         @unique
+  orderId        String?        @unique
+  
+  // Dispatch status lifecycle
+  status         DispatchStatus @default(PENDING)
+  
+  // Rider assignment
+  riderId        String?
+  
+  // Location info
+  pickupLat      Float?
+  pickupLng      Float?
+  deliveryLat    Float?
+  deliveryLng    Float?
+  
+  // Timing estimates
+  estimatedPickup    DateTime?
+  estimatedDelivery  DateTime?
+  actualPickupAt     DateTime?
+  actualDeliveryAt   DateTime?
+  
+  // Payment on delivery
+  podEnabled     Boolean        @default(false)
+  podAmount      Float?
+  podCurrency    String?        @default("KES")
+  podCollected   Boolean        @default(false)
+  podMethod      String?        // e.g., "mpesa", "cash"
+  podReference   String?
+  
+  // Package details
+  packageDescription String?
+  packageWeight  Float?
+  packageValue   Float?
+  
+  // Failure/cancellation reason
+  failureReason  String?
+  cancellationReason String?
+  
+  // Tracking/event log
+  events         DispatchEvent[]
+  
+  // Metadata
+  metadata       Json?
+  
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  order          Order?         @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  rider          Rider?         @relation(fields: [riderId], references: [id], onDelete: SetNull)
+  
+  @@index([orderReference])
+  @@index([easyboxId])
+  @@index([status])
+}
+
+model DispatchEvent {
+  id             String         @id @default(cuid())
+  
+  dispatchId     String
+  
+  // Event type: created, assigned, picked_up, en_route, arrived, delivered, failed, cancelled
+  event          String
+  
+  // Event status (maps to dispatch status)
+  status         DispatchStatus?
+  
+  // Location (if applicable)
+  lat            Float?
+  lng            Float?
+  accuracy       Float?
+  
+  // Failure/reason (if applicable)
+  reason         String?
+  
+  // Rider info snapshot
+  riderName      String?
+  riderPhone     String?
+  
+  // Event timestamp from Easybox
+  eventTimestamp DateTime?
+  
+  // Server timestamp
+  createdAt      DateTime       @default(now())
+  
+  dispatch       Dispatch       @relation(fields: [dispatchId], references: [id], onDelete: Cascade)
+  
+  @@index([dispatchId])
+  @@index([event])
 }
 
 model RefreshToken {
@@ -148,4 +252,16 @@ enum OrderStatus {
   DELIVERED
   FAILED
   RETURNED
+}
+
+enum DispatchStatus {
+  PENDING
+  CREATED
+  ASSIGNED
+  PICKED_UP
+  EN_ROUTE
+  ARRIVED
+  DELIVERED
+  FAILED
+  CANCELLED
 }

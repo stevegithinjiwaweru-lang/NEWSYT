@@ -12,22 +12,49 @@ import authRoutes from "./routes/auth";
 import ridersRoutes from "./routes/riders";
 import merchantsRoutes from "./routes/merchants";
 import dispatchRoutes from "./routes/dispatches";
+import easyboxRoutes from "./routes/easybox";
+import webhookRoutes from "./routes/webhooks";
 import { apiRateLimiter } from "./middlewares/rateLimiter";
 import registerSwagger from "./swagger";
 
 export const app = express();
 
-// CORS
+// CORS - allow webhooks from external origins
 const frontend = process.env.FRONTEND_URL || "http://localhost:5173";
 const corsOptions = {
-  origin: Array.isArray(frontend) ? frontend : frontend,
+  origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
+    // Allow frontend
+    if (!origin || origin === frontend || process.env.NODE_ENV === "development") {
+      callback(null, true);
+    } else {
+      callback(null, true); // Allow webhooks from any origin
+    }
+  },
   credentials: true,
   methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Easybox-Timestamp", "X-Easybox-Signature"],
 };
 
 app.use(helmet());
 app.use(cors(corsOptions));
+
+// Raw body middleware for webhook signature verification
+app.use((req, res, next) => {
+  if (req.path.startsWith("/webhooks")) {
+    let rawBody = "";
+    req.on("data", (chunk: any) => {
+      rawBody += chunk.toString();
+    });
+    req.on("end", () => {
+      req.body = JSON.parse(rawBody || "{}");
+      req.rawBody = rawBody;
+      next();
+    });
+  } else {
+    next();
+  }
+});
+
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
@@ -47,7 +74,10 @@ app.use(apiRateLimiter);
 // request logging
 app.use(requestLogger);
 
-// routes
+// Public routes (webhooks - no auth required)
+app.use("/webhooks", webhookRoutes);
+
+// Routes
 const api = express.Router();
 
 api.use("/auth", authRoutes);
@@ -55,6 +85,7 @@ api.use("/orders", ordersRoutes);
 api.use("/riders", ridersRoutes);
 api.use("/merchants", merchantsRoutes);
 api.use("/dispatches", dispatchRoutes);
+api.use("/v1", easyboxRoutes);
 
 app.use("/api", api);
 
