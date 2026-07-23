@@ -1,7 +1,7 @@
 import jwt, { SignOptions } from "jsonwebtoken";
 
-const ACCESS_SECRET = process.env.JWT_SECRET;
-const REFRESH_SECRET = process.env.REFRESH_TOKEN_SECRET;
+const ACCESS_SECRET = process.env.JWT_SECRET as string;
+const REFRESH_SECRET = process.env.REFRESH_TOKEN_SECRET as string;
 
 if (!ACCESS_SECRET) {
   throw new Error("JWT_SECRET is missing in .env");

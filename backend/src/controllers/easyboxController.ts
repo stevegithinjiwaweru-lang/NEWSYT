@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { createDispatch, cancelDispatch, getDispatchByOrderReference, handleDispatchWebhookEvent } from '../services/dispatchService';
+import { statusForError } from '../utils/httpErrors';
 import { logger } from '../logger';
 
 /**
@@ -49,6 +50,9 @@ export async function createDispatchHandler(req: Request, res: Response) {
 
     logger.info('Dispatch created via API', { orderId: order_reference });
 
+    const io = req.app.get('io');
+    if (io) io.to('dashboard').emit('dispatch:created', { dispatch });
+
     // Return response in Postman collection format
     return res.status(201).json({
       ok: true,
@@ -57,9 +61,10 @@ export async function createDispatchHandler(req: Request, res: Response) {
       estimated_pickup: dispatch.estimatedPickup?.toISOString(),
       estimated_delivery: dispatch.estimatedDelivery?.toISOString(),
     });
-  } catch (err) {
+  } catch (err: any) {
     logger.error('Failed to create dispatch', { error: err });
-    return res.status(500).json({ ok: false, error: 'Failed to create dispatch' });
+    const message = err?.message || 'Failed to create dispatch';
+    return res.status(statusForError(message)).json({ ok: false, error: message });
   }
 }
 
@@ -72,9 +77,15 @@ export async function cancelDispatchHandler(req: Request, res: Response) {
     const { dispatchId } = req.params;
     const { reason } = req.body;
 
-    const dispatch = await cancelDispatch(dispatchId, reason);
+    const dispatch: any = await cancelDispatch(dispatchId, reason);
 
     logger.info('Dispatch cancelled via API', { dispatchId });
+
+    const io = req.app.get('io');
+    if (io) {
+      if (dispatch.rider?.id) io.to(`rider:${dispatch.rider.id}`).emit('dispatch:cancelled', { dispatch });
+      io.to('dashboard').emit('dispatch:cancelled', { dispatch });
+    }
 
     return res.status(200).json({
       ok: true,
@@ -82,9 +93,10 @@ export async function cancelDispatchHandler(req: Request, res: Response) {
       status: dispatch.status.toLowerCase(),
       cancelled_at: new Date().toISOString(),
     });
-  } catch (err) {
+  } catch (err: any) {
     logger.error('Failed to cancel dispatch', { error: err });
-    return res.status(500).json({ ok: false, error: 'Failed to cancel dispatch' });
+    const message = err?.message || 'Failed to cancel dispatch';
+    return res.status(statusForError(message)).json({ ok: false, error: message });
   }
 }
 
@@ -103,13 +115,18 @@ export async function handleEasyboxWebhook(req: Request, res: Response) {
       });
     }
 
-    // Process webhook asynchronously
-    const result = await handleDispatchWebhookEvent(payload);
+    const result: any = await handleDispatchWebhookEvent(payload);
 
     logger.info('Webhook processed successfully', {
       event: payload.event,
       orderId: payload.data.order_reference,
     });
+
+    const io = req.app.get('io');
+    if (io) {
+      if (result.rider?.id) io.to(`rider:${result.rider.id}`).emit('dispatch:status:update', { dispatch: result });
+      io.to('dashboard').emit('dispatch:status:update', { dispatch: result });
+    }
 
     // Return 200 immediately
     return res.status(200).json({
@@ -118,8 +135,9 @@ export async function handleEasyboxWebhook(req: Request, res: Response) {
       dispatch_id: result.id,
       received_at: new Date().toISOString(),
     });
-  } catch (err) {
+  } catch (err: any) {
     logger.error('Failed to process webhook', { error: err });
-    return res.status(500).json({ ok: false, error: 'Webhook processing failed' });
+    const message = err?.message || 'Webhook processing failed';
+    return res.status(statusForError(message)).json({ ok: false, error: message });
   }
 }

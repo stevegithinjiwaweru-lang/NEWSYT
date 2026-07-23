@@ -8,20 +8,24 @@ export const orderRepo = {
     }),
 
   findByExternalId: (externalId: string) =>
-    prisma.order.findUnique({
+    prisma.order.findFirst({
       where: { externalId },
     }),
 
   list: (params: {
     merchantId?: string | null;
+    riderId?: string | null;
     status?: OrderStatus;
+    statusIn?: OrderStatus[];
     skip?: number;
     take?: number;
   }) =>
     prisma.order.findMany({
       where: {
         merchantId: params.merchantId ?? undefined,
+        riderId: params.riderId ?? undefined,
         status: params.status ?? undefined,
+        ...(params.statusIn ? { status: { in: params.statusIn } } : {}),
       },
       orderBy: {
         createdAt: "desc",
@@ -53,6 +57,5 @@ export const orderRepo = {
   createMany: (rows: any[]) =>
     prisma.order.createMany({
       data: rows,
-      skipDuplicates: true,
     }),
 };

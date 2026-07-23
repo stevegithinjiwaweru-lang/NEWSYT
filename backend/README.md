@@ -4,22 +4,22 @@ This is a starter backend for the Easybox Logistics system.
 
 Stack:
 - Node.js + TypeScript + Express
-- Prisma + PostgreSQL
+- Prisma + MongoDB
 - Redis + BullMQ for background jobs
 - Socket.io for realtime rider location updates
 - Multer for file uploads (POD, CSV)
 - fast-csv for CSV parsing
 
 Quick start (local, using Docker)
-1. Copy repo and create `.env` from `.env.example` (change secrets).
-2. Start Postgres & Redis:
+1. Copy repo and create `.env` from `.env.example` (change secrets, set `DATABASE_URL` to your MongoDB connection string).
+2. Start MongoDB & Redis:
    docker-compose up -d
 3. Install dependencies:
    npm install
 4. Generate Prisma client:
    npx prisma generate
-5. Run migrations:
-   npx prisma migrate dev --name init
+5. Push the schema to MongoDB (no migration history for this connector):
+   npx prisma db push
 6. Seed database with sample data:
    npm run seed
 7. Start backend:

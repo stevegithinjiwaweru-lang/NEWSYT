@@ -4,7 +4,7 @@ import { ConfigProvider, theme } from 'antd'
 // Pink primary token
 const antdTheme = {
   token: {
-    colorPrimary: '#FF6FA3',
+    colorPrimary: '#e40d6e',
     borderRadius: 12,
     colorBgLayout: '#f6f7fb',
     colorBgContainer: '#ffffff'

@@ -14,8 +14,8 @@
     "start": "node dist/index.js",
     "prestart": "npm run prisma:generate && npm run db:deploy",
     "prisma:generate": "prisma generate",
-    "prisma:migrate": "prisma migrate dev",
-    "db:deploy": "prisma migrate deploy",
+    "prisma:migrate": "prisma db push",
+    "db:deploy": "prisma db push",
     "seed": "ts-node --transpile-only prisma/seed.ts",
     "verify:build": "npm run build && node -c dist/index.js"
   },
@@ -24,6 +24,7 @@
   },
   "dependencies": {
     "@prisma/client": "^6.19.3",
+    "axios": "^1.18.1",
     "bcrypt": "^5.1.1",
     "bcryptjs": "^3.0.3",
     "body-parser": "^1.20.2",

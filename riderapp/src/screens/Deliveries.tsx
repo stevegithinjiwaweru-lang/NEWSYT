@@ -44,7 +44,7 @@ export default function Deliveries({ navigation, onLogout }: Props) {
   const fetchOrders = useCallback(async () => {
     try {
       const response = await client.get("/orders/mine");
-      const list: Order[] = response.data.orders || [];
+      const list: Order[] = response.data.items || [];
 
       setOrders(
         list.filter((order) => ACTIVE_STATUSES.includes(order.status))
@@ -71,11 +71,11 @@ export default function Deliveries({ navigation, onLogout }: Props) {
     const handleUpdate = () => fetchOrders();
 
     socket.on("order:assigned", handleUpdate);
-    socket.on("order:updated", handleUpdate);
+    socket.on("order:status:update", handleUpdate);
 
     return () => {
       socket.off("order:assigned", handleUpdate);
-      socket.off("order:updated", handleUpdate);
+      socket.off("order:status:update", handleUpdate);
     };
   }, [socket, fetchOrders]);
 

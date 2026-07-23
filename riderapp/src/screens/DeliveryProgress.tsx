@@ -122,6 +122,37 @@ export default function DeliveryProgress({ route, navigation }: Props) {
     }
   };
 
+  const markFailed = () => {
+    Alert.alert(
+      "Mark delivery as failed?",
+      "This cannot be undone.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Mark Failed",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await client.patch(`/orders/${orderId}/status`, {
+                status: "FAILED",
+              });
+
+              Alert.alert("Recorded", "Delivery marked as failed.");
+              navigation.popToTop();
+            } catch (err: any) {
+              Alert.alert(
+                "Error",
+                err?.response?.data?.error ||
+                  err?.message ||
+                  "Failed to update order."
+              );
+            }
+          },
+        },
+      ]
+    );
+  };
+
   if (!location) {
     return (
       <View style={styles.loadingContainer}>
@@ -159,6 +190,9 @@ export default function DeliveryProgress({ route, navigation }: Props) {
         <TouchableOpacity style={styles.button} onPress={markDelivered}>
           <Text style={styles.buttonText}>Mark as Delivered</Text>
         </TouchableOpacity>
+        <TouchableOpacity style={styles.failButton} onPress={markFailed}>
+          <Text style={styles.failButtonText}>Mark as Failed</Text>
+        </TouchableOpacity>
       </View>
     </View>
   );
@@ -186,4 +220,14 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   buttonText: { color: "#fff", fontWeight: "700", fontSize: 16 },
+  failButton: {
+    backgroundColor: "#fff",
+    borderWidth: 1,
+    borderColor: "#d03b3b",
+    paddingVertical: 15,
+    borderRadius: 10,
+    alignItems: "center",
+    marginTop: 10,
+  },
+  failButtonText: { color: "#d03b3b", fontWeight: "700", fontSize: 16 },
 });
