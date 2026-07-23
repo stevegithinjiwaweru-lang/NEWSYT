@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Card, Form, Input, Button, Typography, message } from "antd";
 import { login } from "../services/auth.service";
+import logo from "../assets/LOGO.svg";
 
 const { Title, Text } = Typography;
 
@@ -75,7 +76,7 @@ const Login: React.FC = () => {
           }}
         >
           <img
-            src="/logo.svg"
+            src={logo}
             alt="EasyBox"
             style={{
               width: 70,
