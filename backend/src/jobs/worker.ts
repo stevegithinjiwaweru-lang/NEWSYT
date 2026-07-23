@@ -1,14 +1,18 @@
 import 'dotenv/config'
 import { Worker } from 'bullmq'
-import IORedis from 'ioredis'
 import fs from 'fs'
 import csv from 'fast-csv'
 import { prisma } from '../prisma'
 
-const connection = new IORedis({
+// Pass plain connection options rather than an ioredis instance: bullmq
+// bundles its own copy of ioredis, which is a structurally different (if
+// compatible) type from the top-level `ioredis` package's `Redis` class —
+// passing an instance of the "wrong" copy fails type-checking even though it
+// works at runtime. A plain options object sidesteps the mismatch entirely.
+const connection = {
   host: process.env.REDIS_HOST || '127.0.0.1',
   port: Number(process.env.REDIS_PORT) || 6379
-})
+}
 
 const queueName = 'csv-import'
 

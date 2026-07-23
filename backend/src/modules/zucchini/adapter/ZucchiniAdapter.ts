@@ -1,9 +1,9 @@
-import axios, { AxiosInstance, AxiosError } from 'axios';
+import axios, { AxiosInstance, AxiosError, AxiosResponse, InternalAxiosRequestConfig } from 'axios';
 import crypto from 'crypto';
-import { logger } from '../../logger';
+import { logger } from '../../../logger';
 import { getZucchiniConfig } from '../config';
+import { IZucchiniAdapter } from '../interfaces/IZucchiniAdapter';
 import {
-  IZucchiniAdapter,
   ZucchiniCustomer,
   ZucchiniStore,
   ZucchiniMenu,
@@ -17,7 +17,7 @@ import {
   CreateZucchiniCustomerRequest,
   IntegrationStatus,
   ZucchiniAuthToken,
-} from '../interfaces/IZucchiniAdapter';
+} from '../types';
 import {
   ZucchiniConnectionError,
   ZucchiniAuthenticationError,
@@ -41,7 +41,7 @@ export class ZucchiniAdapter implements IZucchiniAdapter {
   private authToken: ZucchiniAuthToken | null = null;
   private webhookListeners: Map<string, Set<(data: any) => Promise<void>>> = new Map();
   private lastHealthCheck: Date | null = null;
-  private healthCheckInterval: NodeJS.Timer | null = null;
+  private healthCheckInterval: ReturnType<typeof setInterval> | null = null;
   private isInitialized: boolean = false;
   private requestCount = 0;
   private errorCount = 0;
@@ -65,15 +65,15 @@ export class ZucchiniAdapter implements IZucchiniAdapter {
    * Setup axios interceptors for logging, error handling, and telemetry
    */
   private setupInterceptors(): void {
-    this.httpClient.interceptors.request.use((config) => {
+    this.httpClient.interceptors.request.use((config: InternalAxiosRequestConfig) => {
       const requestId = crypto.randomUUID();
       config.headers['X-Request-ID'] = requestId;
-      config.metadata = { startTime: Date.now() };
+      (config as any).metadata = { startTime: Date.now() };
       return config;
     });
 
     this.httpClient.interceptors.response.use(
-      (response) => {
+      (response: AxiosResponse) => {
         const duration = Date.now() - (response.config as any).metadata.startTime;
         this.requestCount++;
         this.totalResponseTime += duration;

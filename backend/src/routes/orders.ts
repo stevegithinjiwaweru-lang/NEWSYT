@@ -3,7 +3,16 @@ import multer from "multer";
 import path from "path";
 import fs from "fs";
 import authMiddleware from "../middlewares/auth";
-import { listOrders, getOrder, createOrder, uploadCsv } from "../controllers/ordersController";
+import {
+  listOrders,
+  listMyOrders,
+  getOrder,
+  createOrder,
+  assignOrder,
+  unassignOrder,
+  updateOrderStatus,
+  uploadCsv,
+} from "../controllers/ordersController";
 
 const router = express.Router();
 const requireAuth = authMiddleware;
@@ -25,8 +34,12 @@ const upload = multer({
 });
 
 router.get("/", requireAuth, listOrders);
+router.get("/mine", requireAuth, listMyOrders);
 router.get("/:id", requireAuth, getOrder);
 router.post("/", requireAuth, createOrder);
+router.post("/:id/assign", requireAuth, assignOrder);
+router.post("/:id/unassign", requireAuth, unassignOrder);
+router.patch("/:id/status", requireAuth, updateOrderStatus);
 router.post("/upload-csv", requireAuth, upload.single("file"), uploadCsv);
 
 export default router;

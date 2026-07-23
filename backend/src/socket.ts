@@ -1,5 +1,6 @@
 import { io } from "./app";
 import { prisma } from "./prisma";
+import { orderService } from "./services/orderService";
 
 interface RiderLocation {
   riderId: string;
@@ -106,6 +107,8 @@ io.on("connection", (socket) => {
 
   // =====================
   // ORDER ASSIGNMENT
+  // Routed through orderService so this shares the same race/capacity
+  // guarantees as the HTTP POST /orders/:id/assign path.
   // =====================
   socket.on(
     "order:assign",
@@ -118,38 +121,23 @@ io.on("connection", (socket) => {
           return;
         }
 
-        await prisma.order.update({
-          where: {
-            id: data.orderId,
-          },
-          data: {
-            riderId: data.riderId,
-            status: "ASSIGNED",
-          },
-        });
+        const order = await orderService.assignToRider(data.orderId, data.riderId);
 
-        io.to(RIDER_ROOM(data.riderId)).emit(
-          "order:assigned",
-          {
-            orderId: data.orderId,
-            message: "New delivery assigned",
-          }
-        );
-
-        io.to(DISPATCH_ROOM).emit(
-          "order:assigned",
-          data
-        );
+        io.to(RIDER_ROOM(data.riderId)).emit("order:assigned", { order });
+        io.to(DISPATCH_ROOM).emit("order:assigned", { order });
 
         console.log("📦 Order assigned:", data);
-      } catch (error) {
+      } catch (error: any) {
         console.error("Order assignment error:", error);
+        socket.emit("order:assign:error", { message: error?.message || "Failed to assign order" });
       }
     }
   );
 
   // =====================
   // ORDER STATUS UPDATE
+  // Routed through orderService so a terminal status frees the rider's
+  // capacity the same way the HTTP PATCH /orders/:id/status path does.
   // =====================
   socket.on(
     "order:status",
@@ -162,23 +150,14 @@ io.on("connection", (socket) => {
           return;
         }
 
-        await prisma.order.update({
-          where: {
-            id: data.orderId,
-          },
-          data: {
-            status: data.status as any,
-          },
-        });
+        const order = await orderService.updateStatus(data.orderId, data.status);
 
-        io.to(DISPATCH_ROOM).emit(
-          "order:tracking:update",
-          data
-        );
+        io.to(DISPATCH_ROOM).emit("order:status:update", { order });
 
         console.log("📊 Order status:", data);
-      } catch (error) {
+      } catch (error: any) {
         console.error("Order status error:", error);
+        socket.emit("order:status:error", { message: error?.message || "Failed to update order status" });
       }
     }
   );

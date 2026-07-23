@@ -6,7 +6,7 @@ export async function waitForDB(
 ): Promise<void> {
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
-      await prisma.$queryRaw`SELECT 1`;
+      await prisma.$runCommandRaw({ ping: 1 });
 
       console.log("✅ DB connected");
       return;

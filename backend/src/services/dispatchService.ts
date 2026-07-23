@@ -1,6 +1,8 @@
 import { prisma } from '../prisma';
 import { logger } from '../logger';
-import { DispatchStatus } from '@prisma/client';
+import { DispatchStatus, OrderStatus, Prisma } from '@prisma/client';
+
+const TERMINAL_DISPATCH_STATUSES: DispatchStatus[] = ['DELIVERED', 'FAILED', 'CANCELLED'];
 
 /**
  * Create a new dispatch record.
@@ -55,19 +57,52 @@ export async function createDispatch(data: {
 
 /**
  * Assign a rider to a dispatch.
+ * `riderId` here is trusted to reference a real, internally-managed Rider
+ * (this is the internal-dashboard path), so it's safe to couple capacity:
+ * the rider must be AVAILABLE, and reassigning frees the previous rider.
  */
 export async function assignDispatch(dispatchId: string, riderId: string) {
   try {
-    const dispatch = await prisma.dispatch.update({
-      where: { id: dispatchId },
-      data: {
-        riderId,
-        status: 'ASSIGNED',
-      },
-      include: { rider: true, order: true },
+    const result = await prisma.$transaction(async (tx) => {
+      const dispatch = await tx.dispatch.findUnique({ where: { id: dispatchId } });
+      if (!dispatch) throw new Error('Dispatch not found');
+      if (TERMINAL_DISPATCH_STATUSES.includes(dispatch.status)) {
+        throw new Error('Dispatch is already completed and cannot be reassigned');
+      }
+      if (dispatch.riderId === riderId) {
+        return dispatch;
+      }
+
+      const rider = await tx.rider.findUnique({ where: { id: riderId } });
+      if (!rider) throw new Error('Rider not found');
+
+      const riderGuard = await tx.rider.updateMany({
+        where: { id: riderId, status: 'AVAILABLE' },
+        data: { status: 'BUSY' },
+      });
+      if (riderGuard.count === 0) throw new Error('Rider is not available');
+
+      const dispatchGuard = await tx.dispatch.updateMany({
+        where: { id: dispatchId, status: { notIn: TERMINAL_DISPATCH_STATUSES } },
+        data: { riderId, status: 'ASSIGNED' },
+      });
+      if (dispatchGuard.count === 0) {
+        throw new Error('Dispatch has already been assigned or is no longer available');
+      }
+
+      if (dispatch.riderId && dispatch.riderId !== riderId) {
+        // Reassignment: free the previously-assigned rider.
+        await tx.rider.update({ where: { id: dispatch.riderId }, data: { status: 'AVAILABLE' } });
+      }
+
+      return tx.dispatch.findUnique({
+        where: { id: dispatchId },
+        include: { rider: true, order: true },
+      });
     });
+
     logger.info('Dispatch assigned', { dispatchId, riderId });
-    return dispatch;
+    return result;
   } catch (err) {
     logger.error('Failed to assign dispatch', { dispatchId, error: err });
     throw err;
@@ -75,20 +110,40 @@ export async function assignDispatch(dispatchId: string, riderId: string) {
 }
 
 /**
- * Cancel a dispatch.
+ * Cancel a dispatch. Idempotent if already cancelled; rejects if already
+ * delivered/failed. Frees the assigned rider (if any) back to AVAILABLE.
  */
 export async function cancelDispatch(dispatchId: string, reason?: string) {
   try {
-    const dispatch = await prisma.dispatch.update({
-      where: { id: dispatchId },
-      data: {
-        status: 'CANCELLED',
-        cancellationReason: reason,
-      },
-      include: { rider: true, order: true },
+    const result = await prisma.$transaction(async (tx) => {
+      const dispatch = await tx.dispatch.findUnique({ where: { id: dispatchId } });
+      if (!dispatch) throw new Error('Dispatch not found');
+
+      if (dispatch.status === 'CANCELLED') {
+        return dispatch;
+      }
+      if (dispatch.status === 'DELIVERED' || dispatch.status === 'FAILED') {
+        throw new Error('Dispatch is already completed and cannot be cancelled');
+      }
+
+      const updated = await tx.dispatch.update({
+        where: { id: dispatchId },
+        data: { status: 'CANCELLED', cancellationReason: reason },
+        include: { rider: true, order: true },
+      });
+
+      if (dispatch.riderId) {
+        await tx.rider.updateMany({
+          where: { id: dispatch.riderId, status: 'BUSY' },
+          data: { status: 'AVAILABLE' },
+        });
+      }
+
+      return updated;
     });
+
     logger.info('Dispatch cancelled', { dispatchId, reason });
-    return dispatch;
+    return result;
   } catch (err) {
     logger.error('Failed to cancel dispatch', { dispatchId, error: err });
     throw err;
@@ -106,21 +161,6 @@ export async function getDispatch(id: string) {
     });
   } catch (err) {
     logger.error('Failed to fetch dispatch', { id, error: err });
-    throw err;
-  }
-}
-
-/**
- * Get a dispatch by Easybox ID.
- */
-export async function getDispatchByEasyboxId(easyboxId: string) {
-  try {
-    return await prisma.dispatch.findUnique({
-      where: { easyboxId },
-      include: { rider: true, order: true, events: { orderBy: { createdAt: 'desc' } } },
-    });
-  } catch (err) {
-    logger.error('Failed to fetch dispatch by easyboxId', { easyboxId, error: err });
     throw err;
   }
 }
@@ -157,7 +197,10 @@ export async function listDispatches() {
 
 /**
  * Handle incoming webhook event from Easybox.
- * Creates dispatch event record and updates dispatch status.
+ * Applies every field change (easyboxId, status, rider, location, POD) as a
+ * single update within one transaction, alongside the DispatchEvent log entry
+ * and the linked Order's status update — atomic, and avoids the divergent
+ * partial-`include` reassignments the previous version had.
  */
 export async function handleDispatchWebhookEvent(payload: {
   event: string;
@@ -178,114 +221,117 @@ export async function handleDispatchWebhookEvent(payload: {
     const { event, data } = payload;
     const { dispatch_id, order_reference, status, rider, location, delivered_at, failure_reason } = data;
 
-    let dispatch = await getDispatchByOrderReference(order_reference);
-
-    if (!dispatch) {
-      logger.warn('Dispatch not found for webhook', { order_reference });
-      // Create new dispatch if it doesn't exist (fallback)
-      dispatch = await createDispatch({
-        orderReference: order_reference,
-      });
-    }
-
-    // Update dispatch Easybox ID if provided
-    if (dispatch_id && !dispatch.easyboxId) {
-      dispatch = await prisma.dispatch.update({
-        where: { id: dispatch.id },
-        data: { easyboxId: dispatch_id },
-        include: { rider: true, order: true },
-      });
-    }
-
-    // Update dispatch status
     const newStatus = mapEasyboxStatusToDispatchStatus(status);
-    dispatch = await prisma.dispatch.update({
-      where: { id: dispatch.id },
-      data: {
-        status: newStatus,
-        actualDeliveryAt: delivered_at ? new Date(delivered_at) : undefined,
-        failureReason: failure_reason,
-      },
-      include: { rider: true, order: true },
-    });
 
-    // Handle rider assignment/update
-    if (rider) {
-      const riderRecord = await prisma.rider.upsert({
-        where: { id: rider.id },
-        update: {
-          name: rider.name,
-          phone: rider.phone,
-          vehicleType: rider.vehicle_type,
-          vehiclePlate: rider.vehicle_plate,
-        },
-        create: {
-          id: rider.id,
-          name: rider.name,
-          phone: rider.phone,
-          vehicleType: rider.vehicle_type,
-          vehiclePlate: rider.vehicle_plate,
-        },
-      });
+    const result = await prisma.$transaction(async (tx) => {
+      let dispatch = await tx.dispatch.findUnique({ where: { orderReference: order_reference } });
 
-      // Assign rider to dispatch if not already assigned
-      if (!dispatch.riderId) {
-        dispatch = await prisma.dispatch.update({
-          where: { id: dispatch.id },
-          data: { riderId: riderRecord.id },
-          include: { rider: true, order: true },
+      if (!dispatch) {
+        logger.warn('Dispatch not found for webhook', { order_reference });
+        dispatch = await tx.dispatch.create({
+          data: { orderReference: order_reference, status: 'PENDING' },
         });
       }
-    }
 
-    // Update location if provided
-    if (location) {
-      dispatch = await prisma.dispatch.update({
+      const updateData: Prisma.DispatchUpdateInput = { status: newStatus };
+
+      if (dispatch_id && !dispatch.easyboxId) {
+        updateData.easyboxId = dispatch_id;
+      }
+      if (delivered_at) {
+        updateData.actualDeliveryAt = new Date(delivered_at);
+      }
+      if (failure_reason) {
+        updateData.failureReason = failure_reason;
+      }
+      if (location) {
+        updateData.deliveryLat = location.latitude;
+        updateData.deliveryLng = location.longitude;
+      }
+      if (event === 'dispatch.delivered' && data.metadata?.pod_collected) {
+        updateData.podCollected = true;
+        updateData.podMethod = data.metadata.pod_method;
+        updateData.podReference = data.metadata.pod_reference;
+      }
+
+      // Rider handling: upsert Easybox's rider record, but only couple
+      // RiderStatus capacity transitions for riders that already existed in
+      // our roster before this call — a rider freshly created here is a
+      // phantom row Easybox mentioned, never one we scheduled capacity for.
+      let riderId = dispatch.riderId;
+      if (rider) {
+        const existingRider = await tx.rider.findUnique({ where: { id: rider.id } });
+
+        const riderRecord = await tx.rider.upsert({
+          where: { id: rider.id },
+          update: {
+            name: rider.name,
+            phone: rider.phone,
+            vehicleType: rider.vehicle_type,
+            vehiclePlate: rider.vehicle_plate,
+          },
+          create: {
+            id: rider.id,
+            name: rider.name,
+            phone: rider.phone,
+            vehicleType: rider.vehicle_type,
+            vehiclePlate: rider.vehicle_plate,
+          },
+        });
+
+        if (!dispatch.riderId) {
+          riderId = riderRecord.id;
+          updateData.rider = { connect: { id: riderRecord.id } };
+        }
+
+        if (existingRider && !dispatch.riderId) {
+          await tx.rider.updateMany({
+            where: { id: riderRecord.id, status: 'AVAILABLE' },
+            data: { status: 'BUSY' },
+          });
+        }
+      }
+
+      if (riderId && TERMINAL_DISPATCH_STATUSES.includes(newStatus)) {
+        const existingRider = await tx.rider.findUnique({ where: { id: riderId } });
+        if (existingRider) {
+          await tx.rider.updateMany({
+            where: { id: riderId, status: 'BUSY' },
+            data: { status: 'AVAILABLE' },
+          });
+        }
+      }
+
+      const updated = await tx.dispatch.update({
         where: { id: dispatch.id },
-        data: {
-          deliveryLat: location.latitude,
-          deliveryLng: location.longitude,
-        },
-        include: { rider: true, order: true },
+        data: updateData,
+        include: { rider: true, order: true, events: { orderBy: { createdAt: 'desc' } } },
       });
-    }
 
-    // Create event log entry
-    await prisma.dispatchEvent.create({
-      data: {
-        dispatchId: dispatch.id,
-        event,
-        status: newStatus,
-        lat: location?.latitude,
-        lng: location?.longitude,
-        accuracy: location?.accuracy,
-        reason: failure_reason,
-        riderName: rider?.name,
-        riderPhone: rider?.phone,
-        eventTimestamp: new Date(payload.timestamp),
-      },
+      await tx.dispatchEvent.create({
+        data: {
+          dispatchId: updated.id,
+          event,
+          status: newStatus,
+          lat: location?.latitude,
+          lng: location?.longitude,
+          accuracy: location?.accuracy,
+          reason: failure_reason,
+          riderName: rider?.name,
+          riderPhone: rider?.phone,
+          eventTimestamp: new Date(payload.timestamp),
+        },
+      });
+
+      if (updated.orderId) {
+        await updateOrderStatusFromDispatch(tx, updated.orderId, newStatus);
+      }
+
+      return updated;
     });
 
-    // Handle order status updates
-    if (dispatch.orderId) {
-      await updateOrderStatusFromDispatch(dispatch);
-    }
-
-    // Handle payment on delivery collection
-    if (event === 'dispatch.delivered' && data.metadata?.pod_collected) {
-      dispatch = await prisma.dispatch.update({
-        where: { id: dispatch.id },
-        data: {
-          podCollected: true,
-          podMethod: data.metadata.pod_method,
-          podReference: data.metadata.pod_reference,
-        },
-        include: { rider: true, order: true },
-      });
-    }
-
-    logger.info('Dispatch webhook event processed', { dispatchId: dispatch.id, event });
-    return dispatch;
+    logger.info('Dispatch webhook event processed', { dispatchId: result.id, event });
+    return result;
   } catch (err) {
     logger.error('Failed to handle dispatch webhook event', { error: err });
     throw err;
@@ -294,6 +340,8 @@ export async function handleDispatchWebhookEvent(payload: {
 
 /**
  * Map Easybox status strings to DispatchStatus enum.
+ * Rejects unrecognized input rather than silently defaulting to PENDING,
+ * which would otherwise regress an in-flight dispatch on a bad payload.
  */
 function mapEasyboxStatusToDispatchStatus(easyboxStatus: string): DispatchStatus {
   const mapping: { [key: string]: DispatchStatus } = {
@@ -306,29 +354,38 @@ function mapEasyboxStatusToDispatchStatus(easyboxStatus: string): DispatchStatus
     'FAILED': 'FAILED',
     'CANCELLED': 'CANCELLED',
   };
-  return mapping[easyboxStatus] || 'PENDING';
+  const mapped = mapping[easyboxStatus?.toUpperCase()];
+  if (!mapped) {
+    throw new Error(`Unrecognized Easybox status: ${easyboxStatus}`);
+  }
+  return mapped;
 }
 
+// DispatchStatus -> OrderStatus. CANCELLED intentionally has no entry: order
+// status is left untouched on dispatch cancellation, since Zucchini/Easybox
+// may issue a new dispatch for the same order.
+const DISPATCH_TO_ORDER_STATUS: Partial<Record<DispatchStatus, OrderStatus>> = {
+  ASSIGNED: 'ASSIGNED',
+  PICKED_UP: 'PICKED_UP',
+  EN_ROUTE: 'IN_TRANSIT',
+  DELIVERED: 'DELIVERED',
+  FAILED: 'FAILED',
+};
+
 /**
- * Update Order status based on Dispatch status.
+ * Update Order status based on Dispatch status, within the caller's transaction.
  */
-async function updateOrderStatusFromDispatch(dispatch: any) {
-  if (!dispatch.orderId) return;
+async function updateOrderStatusFromDispatch(
+  tx: Prisma.TransactionClient,
+  orderId: string,
+  dispatchStatus: DispatchStatus
+) {
+  const newOrderStatus = DISPATCH_TO_ORDER_STATUS[dispatchStatus];
+  if (!newOrderStatus) return;
 
-  const statusMapping: { [key: string]: string } = {
-    'ASSIGNED': 'ASSIGNED',
-    'PICKED_UP': 'PICKED_UP',
-    'EN_ROUTE': 'IN_TRANSIT',
-    'DELIVERED': 'DELIVERED',
-    'FAILED': 'FAILED',
-  };
-
-  const newOrderStatus = statusMapping[dispatch.status];
-  if (newOrderStatus) {
-    await prisma.order.update({
-      where: { id: dispatch.orderId },
-      data: { status: newOrderStatus },
-    });
-    logger.info('Order status updated from dispatch', { orderId: dispatch.orderId, status: newOrderStatus });
-  }
+  await tx.order.update({
+    where: { id: orderId },
+    data: { status: newOrderStatus },
+  });
+  logger.info('Order status updated from dispatch', { orderId, status: newOrderStatus });
 }

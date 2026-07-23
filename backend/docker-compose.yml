@@ -1,19 +1,23 @@
 version: "3.8"
 
 services:
+  # Prisma's MongoDB connector requires a replica set (even single-node) for
+  # transactions/nested writes, so we use bitnami's image which auto-configures one.
   db:
-    image: postgres:15
+    image: bitnami/mongodb:7.0
     restart: always
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: easybox
+      MONGODB_REPLICA_SET_MODE: primary
+      MONGODB_REPLICA_SET_NAME: rs0
+      MONGODB_ADVERTISED_HOSTNAME: db
+      MONGODB_ROOT_PASSWORD: devpassword
+      MONGODB_DATABASE: easybox
     ports:
-      - "5432:5432"
+      - "27017:27017"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - mongodata:/bitnami/mongodb
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -39,7 +43,7 @@ services:
       redis:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql://postgres:postgres@db:5432/easybox?schema=public
+      DATABASE_URL: mongodb://root:devpassword@db:27017/easybox?authSource=admin&replicaSet=rs0
       REDIS_URL: redis://redis:6379
       NODE_ENV: development
     # For local development we mount source so we can iterate quickly.
@@ -53,4 +57,4 @@ services:
     # and ensure you do NOT mount the source into /app (so built dist remains inside the image).
 
 volumes:
-  pgdata:
+  mongodata:

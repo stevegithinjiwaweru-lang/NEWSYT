@@ -1,4 +1,4 @@
-import { logger } from '../../logger';
+import { logger } from '../../../logger';
 import { getZucchiniAdapter } from '../adapter/ZucchiniAdapter';
 import { CreateZucchiniOrderRequest, ZucchiniApiResponse } from '../types';
 

@@ -1,5 +1,5 @@
 import { EventEmitter } from 'events';
-import { logger } from '../../logger';
+import { logger } from '../../../logger';
 import { DomainEvent } from './DomainEvents';
 
 /**

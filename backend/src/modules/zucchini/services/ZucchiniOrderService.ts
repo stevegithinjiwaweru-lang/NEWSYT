@@ -1,5 +1,5 @@
-import { prisma } from '../../prisma';
-import { logger } from '../../logger';
+import { prisma } from '../../../prisma';
+import { logger } from '../../../logger';
 import { getZucchiniAdapter } from '../adapter/ZucchiniAdapter';
 import {
   ZucchiniCustomer,
@@ -227,9 +227,12 @@ export class ZucchiniOrderService {
 
   private async updateLocalOrderStatus(orderId: string, status: string): Promise<void> {
     try {
+      // Note: Zucchini's status vocabulary (e.g. 'CANCELLED') doesn't map 1:1
+      // onto our OrderStatus enum yet — this is placeholder scaffolding until
+      // the real Zucchini integration defines its status-mapping contract.
       await prisma.order.update({
         where: { id: orderId },
-        data: { status },
+        data: { status: status as any },
       });
     } catch (error) {
       logger.error('Failed to update local order status', { orderId, status, error });

@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import client from "../api/client";
 
 export default function OrderUpload() {
   const [file, setFile] = useState<File | null>(null);
@@ -15,20 +16,13 @@ export default function OrderUpload() {
       amount: 100,
     };
     try {
-      const resp = await fetch("/orders", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const json = await resp.json();
-      if (!resp.ok) {
-        setMessage("Create failed: " + (json.error || json.message));
-      } else {
-        setMessage("Order created: " + json.order.id);
-      }
-    } catch (e) {
+      const { data } = await client.post("/orders", payload);
+      setMessage("Order created: " + data.order.id);
+    } catch (e: any) {
       console.error(e);
-      setMessage("Network error");
+      setMessage(
+        "Create failed: " + (e?.response?.data?.error || e?.message || "Network error")
+      );
     }
   };
 
@@ -40,19 +34,15 @@ export default function OrderUpload() {
     if (merchantName) fd.append("merchantName", merchantName);
 
     try {
-      const resp = await fetch("/orders/upload-csv", {
-        method: "POST",
-        body: fd,
+      const { data } = await client.post("/orders/upload-csv", fd, {
+        headers: { "Content-Type": "multipart/form-data" },
       });
-      const json = await resp.json();
-      if (!resp.ok) {
-        setMessage("Upload failed: " + (json.error || json.message));
-      } else {
-        setMessage(`Upload success: vendor=${json.vendor} imported=${json.imported}`);
-      }
-    } catch (e) {
+      setMessage(`Upload success: imported=${data.imported}`);
+    } catch (e: any) {
       console.error(e);
-      setMessage("Network error during upload");
+      setMessage(
+        "Upload failed: " + (e?.response?.data?.error || e?.message || "Network error")
+      );
     }
   };
 
