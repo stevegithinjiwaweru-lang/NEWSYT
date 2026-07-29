@@ -56,6 +56,9 @@ const ACTIVE_DISPATCH_STATUSES = [
   "ARRIVED",
 ];
 
+// Accept common spellings used in seed/docs
+const ZUCCHINI_NAMES = new Set(["zucchini", "zuchinni"]);
+
 const Dashboard: React.FC = () => {
   const { data: ordersData, isLoading: ordersLoading } = useQuery({
     queryKey: ["dashboard-orders"],
@@ -82,23 +85,37 @@ const Dashboard: React.FC = () => {
   const riders = asList(ridersData, "items");
   const dispatches = asList(dispatchesData, "dispatches");
 
+  // Build merchant lookup to detect Zucchini by id
+  const merchantNameById = new Map<string, string>();
+  for (const m of merchants) merchantNameById.set(m.id, (m.name || "").toLowerCase());
+
+  // Filter everything to Zucchini-only (client-side)
+  const isZucchiniOrder = (o: any) => {
+    const nameFromOrder = (o.merchant?.name || "").toLowerCase();
+    if (nameFromOrder && ZUCCHINI_NAMES.has(nameFromOrder)) return true;
+    const nameFromId = merchantNameById.get(o.merchantId || "") || "";
+    return ZUCCHINI_NAMES.has(nameFromId);
+  };
+
+  const filteredOrders = orders.filter(isZucchiniOrder);
+
   const loading = ordersLoading || merchantsLoading || ridersLoading || dispatchesLoading;
 
   const days = useMemo(last7Days, []);
 
   const stats = useMemo(() => {
-    const ordersTodayList = orders.filter((o: any) => isToday(o.createdAt));
-    const deliveredTodayList = orders.filter(
+    const ordersTodayList = filteredOrders.filter((o: any) => isToday(o.createdAt));
+    const deliveredTodayList = filteredOrders.filter(
       (o: any) => o.status === "DELIVERED" && isToday(o.updatedAt)
     );
-    const pending = orders.filter((o: any) => !FINAL_STATUSES.includes(o.status));
-    const failed = orders.filter((o: any) => o.status === "FAILED");
+    const pending = filteredOrders.filter((o: any) => !FINAL_STATUSES.includes(o.status));
+    const failed = filteredOrders.filter((o: any) => o.status === "FAILED");
     const activeRiders = riders.filter((r: any) =>
       ["AVAILABLE", "BUSY", "IN_DELIVERY"].includes(r.status)
     );
 
     const buildTrend = (predicate: (o: any) => boolean) =>
-      days.map((day) => orders.filter((o: any) => predicate(o) && dayKey(new Date(o.createdAt)) === day).length);
+      days.map((day) => filteredOrders.filter((o: any) => predicate(o) && dayKey(new Date(o.createdAt)) === day).length);
 
     return {
       ordersToday: ordersTodayList.length,
@@ -112,12 +129,12 @@ const Dashboard: React.FC = () => {
       activeRiders: activeRiders.length,
       totalRiders: riders.length,
     };
-  }, [orders, riders, days]);
+  }, [filteredOrders, riders, days]);
 
   const ordersOverviewData = useMemo(
     () =>
       days.map((day) => {
-        const dayOrders = orders.filter((o: any) => dayKey(new Date(o.createdAt)) === day);
+        const dayOrders = filteredOrders.filter((o: any) => dayKey(new Date(o.createdAt)) === day);
         return {
           day: dayLabel(day),
           Delivered: dayOrders.filter((o: any) => o.status === "DELIVERED").length,
@@ -126,12 +143,13 @@ const Dashboard: React.FC = () => {
           ).length,
         };
       }),
-    [orders, days]
+    [filteredOrders, days]
   );
 
   const ordersByMerchant: DonutSlice[] = useMemo(() => {
+    // Since this is Zucchini-only, either show one slice for Zucchini or the distribution of sub-sources
     const counts = new Map<string, number>();
-    for (const o of orders) {
+    for (const o of filteredOrders) {
       const name = o.merchant?.name || merchants.find((m: any) => m.id === o.merchantId)?.name || "Unknown";
       counts.set(name, (counts.get(name) || 0) + 1);
     }
@@ -145,7 +163,7 @@ const Dashboard: React.FC = () => {
     }));
     if (rest > 0) slices.push({ name: "Other", value: rest, color: STATUS.muted });
     return slices;
-  }, [orders, merchants]);
+  }, [filteredOrders, merchants]);
 
   const riderStatusData: DonutSlice[] = useMemo(() => {
     const byStatus = (statuses: string[]) =>
@@ -159,7 +177,15 @@ const Dashboard: React.FC = () => {
   }, [riders]);
 
   const bottomStats = useMemo(() => {
-    const finished = dispatches.filter((d: any) =>
+    const filteredDispatches = dispatches.filter((d: any) => {
+      // dispatches reference orders by orderReference; attempt to map dispatch -> order merchant via order object if loaded
+      const order = d.order;
+      if (order) return isZucchiniOrder(order);
+      // if no order payload is present, conservatively include the dispatch (we cannot contact backend)
+      return true;
+    });
+
+    const finished = filteredDispatches.filter((d: any) =>
       ["DELIVERED", "FAILED"].includes(d.status)
     );
     const successRate = finished.length
@@ -168,7 +194,7 @@ const Dashboard: React.FC = () => {
         )
       : 0;
 
-    const timedDeliveries = dispatches.filter(
+    const timedDeliveries = filteredDispatches.filter(
       (d: any) => d.actualPickupAt && d.actualDeliveryAt
     );
     const avgMinutes = timedDeliveries.length
@@ -182,7 +208,7 @@ const Dashboard: React.FC = () => {
         )
       : null;
 
-    const cashToday = dispatches
+    const cashToday = filteredDispatches
       .filter((d: any) => d.podCollected && isToday(d.actualDeliveryAt))
       .reduce((sum: number, d: any) => sum + (d.podAmount || 0), 0);
 
@@ -190,7 +216,7 @@ const Dashboard: React.FC = () => {
       ? Math.round((stats.activeRiders / riders.length) * 100)
       : 0;
 
-    const activeDispatches = dispatches.filter((d: any) =>
+    const activeDispatches = filteredDispatches.filter((d: any) =>
       ACTIVE_DISPATCH_STATUSES.includes(d.status)
     ).length;
 
@@ -276,7 +302,7 @@ const Dashboard: React.FC = () => {
             {ordersByMerchant.length ? (
               <DonutChart
                 data={ordersByMerchant}
-                centerValue={orders.length}
+                centerValue={filteredOrders.length}
                 centerLabel="Total Orders"
               />
             ) : (
@@ -320,8 +346,8 @@ const Dashboard: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {orders.length ? (
-                    orders.slice(0, 8).map((o: any) => (
+                  {filteredOrders.length ? (
+                    filteredOrders.slice(0, 8).map((o: any) => (
                       <tr key={o.id}>
                         <td>{o.id.slice(0, 8).toUpperCase()}</td>
                         <td>{o.merchant?.name || "N/A"}</td>
