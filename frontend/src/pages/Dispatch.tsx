@@ -3,20 +3,31 @@ import { Card, Tag, Spin, Empty, Row, Col } from "antd";
 import { useQuery } from "@tanstack/react-query";
 import client from "../api/client";
 import { STATUS } from "../theme/palette";
+import DispatchOrderUpload from "../components/DispatchOrderUpload";
 
-interface DispatchRecord {
-  id: string;
-  orderReference: string;
-  status: string;
-  rider?: { name: string; phone: string } | null;
-  order?: { customerName: string; address: string } | null;
-  estimatedDelivery?: string | null;
-  actualPickupAt?: string | null;
-  actualDeliveryAt?: string | null;
-  createdAt: string;
-}
+const asList = (data: any, ...keys: string[]) => {
+  if (Array.isArray(data)) return data;
+  for (const key of keys) {
+    if (Array.isArray(data?.[key])) return data[key];
+  }
+  return [];
+};
 
-const ACTIVE_STATUSES = ["PENDING", "CREATED", "ASSIGNED", "PICKED_UP", "EN_ROUTE", "ARRIVED"];
+const dayKey = (d: Date) => d.toISOString().slice(0, 10);
+
+const FINAL_STATUSES = ["DELIVERED", "FAILED", "RETURNED"];
+
+const ZUCCHINI_NAMES = new Set(["zucchini", "zuchinni"]);
+
+const isZucchiniOrder = (o: any, merchantNameById: Map<string, string>) => {
+  if (!o) return false;
+  const nameFromOrder = (o.merchant?.name || "").toLowerCase();
+  if (nameFromOrder && ZUCCHINI_NAMES.has(nameFromOrder)) return true;
+  const nameFromId = merchantNameById.get(o.merchantId || "") || "";
+  return ZUCCHINI_NAMES.has(nameFromId);
+};
+
+const ACTIVE_DISPATCH_STATUSES = ["PENDING", "CREATED", "ASSIGNED", "PICKED_UP", "EN_ROUTE", "ARRIVED"];
 
 const STATUS_TAG: Record<string, { color: string; label: string }> = {
   PENDING: { color: STATUS.muted, label: "Pending" },
@@ -31,14 +42,7 @@ const STATUS_TAG: Record<string, { color: string; label: string }> = {
 };
 
 const fetchDispatches = async () => (await client.get("/dispatches")).data;
-
-const asList = (data: any, ...keys: string[]): any[] => {
-  if (Array.isArray(data)) return data;
-  for (const key of keys) {
-    if (Array.isArray(data?.[key])) return data[key];
-  }
-  return [];
-};
+const fetchMerchants = async () => (await client.get("/merchants")).data;
 
 const Dispatch: React.FC = () => {
   const { data, isLoading } = useQuery({
@@ -47,21 +51,33 @@ const Dispatch: React.FC = () => {
     refetchInterval: 15000,
   });
 
-  const dispatches: DispatchRecord[] = asList(data, "dispatches");
+  const { data: merchantsData } = useQuery({ queryKey: ["merchants"], queryFn: fetchMerchants });
+
+  const dispatches: any[] = asList(data, "dispatches");
+  const merchants = asList(merchantsData, "items");
+
+  const merchantNameById = new Map<string, string>();
+  for (const m of merchants) merchantNameById.set(m.id, (m.name || "").toLowerCase());
+
+  // Only include dispatches tied to Zucchini orders (operational workspace for Zucchini)
+  const zucchiniDispatches = dispatches.filter((d) => {
+    if (d?.order) return isZucchiniOrder(d.order, merchantNameById);
+    return false;
+  });
 
   const active = useMemo(
     () =>
-      dispatches
-        .filter((d) => ACTIVE_STATUSES.includes(d.status))
+      zucchiniDispatches
+        .filter((d) => ACTIVE_DISPATCH_STATUSES.includes(d.status))
         .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()),
-    [dispatches]
+    [zucchiniDispatches]
   );
 
   const summary = [
     { label: "Active Dispatches", value: active.length },
-    { label: "Picked Up", value: dispatches.filter((d) => d.status === "PICKED_UP").length },
-    { label: "En Route", value: dispatches.filter((d) => d.status === "EN_ROUTE").length },
-    { label: "Delivered Today", value: dispatches.filter((d) => d.status === "DELIVERED").length },
+    { label: "Picked Up", value: zucchiniDispatches.filter((d) => d.status === "PICKED_UP").length },
+    { label: "En Route", value: zucchiniDispatches.filter((d) => d.status === "EN_ROUTE").length },
+    { label: "Delivered Today", value: zucchiniDispatches.filter((d) => d.status === "DELIVERED").length },
   ];
 
   if (isLoading) {
@@ -70,6 +86,9 @@ const Dispatch: React.FC = () => {
 
   return (
     <div>
+      {/* Upload / Create panel */}
+      <DispatchOrderUpload />
+
       <Row gutter={16} style={{ marginBottom: 16 }}>
         {summary.map((s) => (
           <Col span={6} key={s.label}>
