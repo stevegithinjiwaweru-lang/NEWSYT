@@ -5,12 +5,12 @@ import { Avatar, Badge } from 'antd'
 
 const PAGE_TITLES: Record<string, { title: string; subtitle: string }> = {
   '/dashboard': { title: 'Dashboard', subtitle: 'Overview of operations' },
-  '/orders': { title: 'Orders', subtitle: 'Manage customer orders' },
+  '/orders': { title: 'Orders', subtitle: 'Monitor Zucchini orders' },
   '/dispatch': { title: 'Dispatch', subtitle: 'Assign and track deliveries' },
   '/riders': { title: 'Riders', subtitle: 'Manage and monitor your delivery team' },
   '/tracking': { title: 'Tracking', subtitle: 'Live rider locations' },
-  '/merchants': { title: 'Merchants', subtitle: 'Connected merchant stores' },
-  '/reports': { title: 'Reports', subtitle: 'Performance and analytics' },
+  '/merchants': { title: 'Merchant Integration', subtitle: 'Zucchini integration' },
+  '/reports': { title: 'Reports', subtitle: 'Performance and analytics (Zucchini-only)' },
   '/settings': { title: 'Settings', subtitle: 'Account and system settings' },
 }
 
@@ -37,7 +37,7 @@ const Topbar: React.FC<{ user: { id: string; name: string; role: string }; onLog
         </div>
         <div className="topbar-pill">
           <ShopOutlined />
-          <span>All Branches</span>
+          <span>Zucchini</span>
         </div>
         <Badge count={2} size="small">
           <BellOutlined style={{ fontSize: 18 }} />
