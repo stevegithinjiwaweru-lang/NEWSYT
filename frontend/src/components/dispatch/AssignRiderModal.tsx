@@ -1,9 +1,10 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Modal, List, Avatar, Button, Input, Tag, Space, Empty, message, Divider, Typography } from "antd";
+import { Modal, List, Avatar, Button, Input, Tag, Space, Empty, message, Divider, Typography, Card } from "antd";
 import { UserOutlined } from "@ant-design/icons";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { fetchRiders, assignOrder, fetchPendingDispatchOrders } from "../../services/dispatch.service";
 import { runInBatches } from "../../utils/batchApi";
+import client from "../../api/client";
 
 const { Text } = Typography;
 
@@ -15,21 +16,20 @@ interface Props {
   onAssigned?: (summary?: any) => void;
 }
 
-const ACTIVE_STATUSES = new Set(["ASSIGNED", "PICKED_UP", "IN_TRANSIT"]);
+const ACTIVE_STATUSES = ["ASSIGNED", "PICKED_UP", "IN_TRANSIT"];
 const MAX_CAPACITY = 4;
 
 const AssignRiderModal: React.FC<Props> = ({ open, orderId, selectedOrderIds = [], onClose, onAssigned }) => {
   const queryClient = useQueryClient();
   const { data: ridersData } = useQuery({ queryKey: ["riders"], queryFn: fetchRiders });
-  const { data: pendingOrdersData } = useQuery({ queryKey: ["recentOrdersForCapacity"], queryFn: async () => (await fetchPendingDispatchOrders({ limit: 100 })).items || [] });
 
   const riders = useMemo(() => (Array.isArray(ridersData) ? ridersData : ridersData?.items || []), [ridersData]);
-  const recentOrders = useMemo(() => (Array.isArray(pendingOrdersData) ? pendingOrdersData : pendingOrdersData?.items || []), [pendingOrdersData]);
 
   const [query, setQuery] = useState("");
   const [selectedRider, setSelectedRider] = useState<any | null>(null);
   const [loading, setLoading] = useState(false);
   const [summary, setSummary] = useState<any | null>(null);
+  const [activeCounts, setActiveCounts] = useState<Map<string, number>>(new Map());
 
   useEffect(() => {
     if (!open) {
@@ -39,34 +39,55 @@ const AssignRiderModal: React.FC<Props> = ({ open, orderId, selectedOrderIds = [
     }
   }, [open]);
 
-  // compute active orders per rider by fetching orders assigned to riders (best-effort; limited by API limits)
-  const riderCapacity = useMemo(() => {
-    const map = new Map<string, { active: number; remaining: number }>();
-    for (const r of riders) map.set(r.id, { active: 0, remaining: MAX_CAPACITY });
+  // Fetch active orders for capacity calculation
+  useEffect(() => {
+    let mounted = true;
+    async function loadActiveCounts() {
+      try {
+        // Fetch orders for ACTIVE_STATUSES in parallel (page limit large)
+        const promises = ACTIVE_STATUSES.map((s) => client.get('/orders', { params: { status: s, limit: 500 } }));
+        const responses = await Promise.all(promises);
+        const allOrders: any[] = [];
+        for (const r of responses) {
+          const items = Array.isArray(r.data) ? r.data : r.data?.items || [];
+          allOrders.push(...items);
+        }
 
-    // recentOrders includes only recent pending orders; to compute active, we try to use orders fetched from cache - else active may be 0
-    // For more accurate counts consider server-side aggregation endpoint in future
-    for (const o of recentOrders) {
-      const rid = o.rider?.id || o.riderId;
-      if (!rid) continue;
-      const s = o.status;
-      if (ACTIVE_STATUSES.has(s)) {
-        const prev = map.get(rid) || { active: 0, remaining: MAX_CAPACITY };
-        prev.active += 1;
-        prev.remaining = Math.max(0, MAX_CAPACITY - prev.active);
-        map.set(rid, prev);
+        const map = new Map<string, number>();
+        for (const o of allOrders) {
+          const rid = o.rider?.id || o.riderId;
+          if (!rid) continue;
+          map.set(rid, (map.get(rid) || 0) + 1);
+        }
+
+        if (mounted) setActiveCounts(map);
+      } catch (err) {
+        // ignore — best effort
+        console.error('Failed to load active order counts', err);
       }
     }
 
-    // ensure riders without entries exist
+    loadActiveCounts();
+    const iv = setInterval(loadActiveCounts, 15000); // refresh every 15s
+    return () => {
+      mounted = false;
+      clearInterval(iv);
+    };
+  }, []);
+
+  const filteredRiders = useMemo(
+    () => riders.filter((r: any) => (r.name || "").toLowerCase().includes(query.toLowerCase()) || (r.phone || "").includes(query)),
+    [riders, query]
+  );
+
+  const riderCapacity = useMemo(() => {
+    const map = new Map<string, { active: number; remaining: number; rider: any }>();
     for (const r of riders) {
-      if (!map.has(r.id)) map.set(r.id, { active: 0, remaining: MAX_CAPACITY });
+      const active = activeCounts.get(r.id) || 0;
+      map.set(r.id, { active, remaining: Math.max(0, MAX_CAPACITY - active), rider: r });
     }
-
     return map;
-  }, [riders, recentOrders]);
-
-  const filteredRiders = useMemo(() => riders.filter((r: any) => (r.name || "").toLowerCase().includes(query.toLowerCase()) || (r.phone || "").includes(query)), [riders, query]);
+  }, [riders, activeCounts]);
 
   const handleAssignSingle = async () => {
     if (!selectedRider) return message.error("Select a rider");
@@ -112,7 +133,7 @@ const AssignRiderModal: React.FC<Props> = ({ open, orderId, selectedOrderIds = [
 
       const remainingPending = selectedOrderIds.length - assignments.length;
 
-      // execute assignments in batches
+      // execute assignments in batches with detailed results
       const results = await runInBatches(assignments, async (a) => {
         try {
           await assignOrder(a.orderId, a.riderId);
@@ -122,11 +143,16 @@ const AssignRiderModal: React.FC<Props> = ({ open, orderId, selectedOrderIds = [
         }
       }, 6);
 
-      const detailed = results.map((r) => (r.status === "fulfilled" ? r.value : (r.reason || { success: false })));
+      const detailed = results.map((r) => (r.status === "fulfilled" ? r.value : { success: false, reason: r.reason?.message || String(r.reason) }));
       const succeeded = detailed.filter((d: any) => d.success).length;
       const failed = detailed.filter((d: any) => !d.success).length;
 
-      const ridersAtCapacity = capacities.filter((c) => c.remaining === 0 || c.remaining <= 0).map((c) => c.rider.name);
+      const ridersAtCapacity = capacities.filter((c) => {
+        const used = detailed.filter((d: any) => d.success && d.riderId === c.riderId).length;
+        return c.remaining - used <= 0;
+      }).map((c) => c.rider.name);
+
+      const failedDetails = detailed.filter((d: any) => !d.success).map((d: any) => ({ orderId: d.orderId, reason: d.reason }));
 
       const summaryObj = {
         totalSelected: selectedOrderIds.length,
@@ -134,6 +160,7 @@ const AssignRiderModal: React.FC<Props> = ({ open, orderId, selectedOrderIds = [
         failedAssignments: failed,
         remainingPending,
         ridersAtCapacity,
+        failedDetails,
         details: detailed,
       };
 
@@ -149,21 +176,32 @@ const AssignRiderModal: React.FC<Props> = ({ open, orderId, selectedOrderIds = [
   };
 
   return (
-    <Modal title={selectedOrderIds.length ? `Assign ${selectedOrderIds.length} orders` : orderId ? `Assign Rider` : "Assign Rider"} open={open} onCancel={onClose} footer={null} width={800}>
+    <Modal title={selectedOrderIds.length ? `Assign ${selectedOrderIds.length} orders` : orderId ? `Assign Rider` : "Assign Rider"} open={open} onCancel={onClose} footer={null} width={900}>
       <Input.Search placeholder="Search rider by name or phone" onSearch={(v) => setQuery(v)} onChange={(e) => setQuery(e.target.value)} style={{ marginBottom: 12 }} />
 
       <div style={{ display: 'flex', gap: 12 }}>
-        <div style={{ flex: 1, maxHeight: 400, overflow: 'auto' }}>
+        <div style={{ flex: 1, maxHeight: 480, overflow: 'auto' }}>
           {filteredRiders.length ? (
             <List
               dataSource={filteredRiders}
               renderItem={(r: any) => {
                 const cap = riderCapacity.get(r.id) || { active: 0, remaining: MAX_CAPACITY };
+                const atCapacity = cap.remaining <= 0;
                 return (
                   <List.Item actions={[
-                    <Button type="link" onClick={() => setSelectedRider(r)} disabled={cap.remaining <= 0}>{cap.remaining <= 0 ? 'At capacity' : 'Select'}</Button>
+                    <Button type="link" onClick={() => setSelectedRider(r)} disabled={atCapacity}>{atCapacity ? 'At capacity' : 'Select'}</Button>
                   ]}>
-                    <List.Item.Meta avatar={<Avatar icon={<UserOutlined />} />} title={<div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><div>{r.name}</div><div><Text type={cap.remaining <= 0 ? 'danger' : cap.remaining <=1 ? 'warning' : 'secondary'}>{cap.active} / 4 Active Orders</Text></div></div>} description={<div>{r.phone} · <Text strong>Remaining: {cap.remaining}</Text></div>} />
+                    <List.Item.Meta
+                      avatar={<Avatar icon={<UserOutlined />} />}
+                      title={<div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div style={{ fontWeight: 600 }}>{r.name}</div>
+                        <div style={{ textAlign: 'right' }}>
+                          <div style={{ fontSize: 12 }}>{r.vehicleType || 'Motorbike'}</div>
+                          <div style={{ fontSize: 12, color: atCapacity ? '#ef4444' : '#f59e0b' }}>{cap.active} / {MAX_CAPACITY} Active Orders</div>
+                          <div style={{ fontSize: 12 }}>Remaining: <Text strong>{cap.remaining}</Text></div>
+                        </div>
+                      </div>}
+                      description={<div>{r.phone} · {r.bikeReg || ''}</div>} />
                   </List.Item>
                 );
               }}
@@ -173,7 +211,7 @@ const AssignRiderModal: React.FC<Props> = ({ open, orderId, selectedOrderIds = [
           )}
         </div>
 
-        <div style={{ width: 320 }}>
+        <div style={{ width: 360 }}>
           <Card title="Selected">
             <div style={{ marginBottom: 12 }}><strong>Rider:</strong> {selectedRider ? selectedRider.name : '—'}</div>
             <div style={{ marginBottom: 12 }}><strong>Orders:</strong> {selectedOrderIds.length || (orderId ? 1 : 0)}</div>
@@ -190,6 +228,13 @@ const AssignRiderModal: React.FC<Props> = ({ open, orderId, selectedOrderIds = [
               <div>Failed Assignments: {summary.failedAssignments}</div>
               <div>Remaining Pending: {summary.remainingPending}</div>
               <div>Riders at Capacity: {summary.ridersAtCapacity.join(', ') || 'None'}</div>
+              {summary.failedDetails && summary.failedDetails.length > 0 && (
+                <>
+                  <Divider />
+                  <div style={{ fontWeight: 600, marginBottom: 8 }}>Failed Assignments</div>
+                  <List dataSource={summary.failedDetails} renderItem={(f: any) => <List.Item>{f.orderId}: {f.reason}</List.Item>} />
+                </>
+              )}
             </Card>
           )}
         </div>
