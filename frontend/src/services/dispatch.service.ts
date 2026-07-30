@@ -23,11 +23,22 @@ export const fetchPendingDispatchOrders = async (params: any = {}) => {
 };
 
 export const assignOrder = async (orderId: string, riderId: string) => {
+  // backend has POST /orders/:id/assign
   const response = await client.post(`/orders/${orderId}/assign`, { riderId });
   return response.data;
 };
 
 export const fetchRiders = async (params: any = {}) => {
   const response = await client.get("/riders", { params: { limit: params.limit || 200 } });
+  return response.data;
+};
+
+export const createOrder = async (payload: any) => {
+  const response = await client.post('/orders', payload);
+  return response.data;
+};
+
+export const createRider = async (payload: any) => {
+  const response = await client.post('/riders', payload);
   return response.data;
 };
