@@ -1,8 +1,8 @@
 import React from "react";
-import DispatchBoard from "../components/orders/DispatchBoard";
+import DispatchPage from "../components/dispatch/DispatchPage";
 
 const Dispatch: React.FC = () => {
-  return <DispatchBoard />;
+  return <DispatchPage />;
 };
 
 export default Dispatch;

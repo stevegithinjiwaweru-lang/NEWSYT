@@ -1,8 +1,8 @@
 import React from "react";
-import OrdersPage from "../components/orders/OrdersPage";
+import OrdersTableComponent from "../components/orders/OrdersTable";
 
 const Orders: React.FC = () => {
-  return <OrdersPage />;
+  return <OrdersTableComponent />;
 };
 
 export default Orders;

@@ -1,5 +1,4 @@
 import client from "../api/client";
-import { endpoints } from "../api/endpoints";
 
 export interface Order {
   id?: string;
@@ -7,54 +6,27 @@ export interface Order {
   phone?: string;
   address?: string;
   merchantId?: string;
-  riderId?: string;
+  riderId?: string | null;
   amount?: number;
   paymentType?: string;
   status?: string;
   createdAt?: string;
   updatedAt?: string;
+  deliveredAt?: string | null;
   [key: string]: any;
 }
 
-interface OrdersResponse {
-  ok: boolean;
-  items: Order[];
-  page: number;
-  limit: number;
-}
-
-interface CreateOrderResponse {
-  ok: boolean;
-  order: Order;
-}
-
-export const createOrder = async (payload: Order): Promise<Order> => {
-  try {
-    const { data } = await client.post<CreateOrderResponse>(
-      endpoints.orders.create,
-      payload
-    );
-
-    if (!data.ok) {
-      throw new Error("Failed to create order");
-    }
-
-    return data.order;
-  } catch (error) {
-    console.error("Failed to create order:", error);
-    throw error;
-  }
+export const getOrders = async (params: any = {}) => {
+  const { data } = await client.get("/orders", { params });
+  return data;
 };
 
-export const getOrders = async (): Promise<Order[]> => {
-  try {
-    const { data } = await client.get<OrdersResponse>(
-      endpoints.orders.getAll
-    );
+export const getOrder = async (id: string) => {
+  const { data } = await client.get(`/orders/${id}`);
+  return data;
+};
 
-    return Array.isArray(data.items) ? data.items : [];
-  } catch (error) {
-    console.error("Failed to fetch orders:", error);
-    throw error;
-  }
+export const updateOrderStatus = async (orderId: string, status: string) => {
+  const { data } = await client.patch(`/orders/${orderId}/status`, { status });
+  return data;
 };
