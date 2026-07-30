@@ -6,10 +6,14 @@ const devFormat = printf(({ level, message, timestamp }) => {
   return `${timestamp} ${level}: ${message}`;
 });
 
-const logger = winston.createLogger({
+const winstonLogger = winston.createLogger({
   level: process.env.LOG_LEVEL || (process.env.NODE_ENV === 'production' ? 'info' : 'debug'),
-  format: process.env.NODE_ENV === 'production' ? combine(timestamp(), json()) : combine(colorize(), timestamp(), devFormat),
+  format:
+    process.env.NODE_ENV === 'production'
+      ? combine(timestamp(), json())
+      : combine(colorize(), timestamp(), devFormat),
   transports: [new winston.transports.Console()],
 });
 
-export default logger;
+export default winstonLogger;
+export const logger = winstonLogger;
