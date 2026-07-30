@@ -3,6 +3,7 @@ import { Worker } from 'bullmq'
 import fs from 'fs'
 import csv from 'fast-csv'
 import { prisma } from '../prisma'
+import logger from '../logger'
 
 // Pass plain connection options rather than an ioredis instance: bullmq
 // bundles its own copy of ioredis, which is a structurally different (if
@@ -19,7 +20,7 @@ const queueName = 'csv-import'
 const worker = new Worker(
   queueName,
   async (job) => {
-    console.log('Processing CSV job:', job.id, job.name)
+    logger.info('Processing CSV job:', { id: job.id, name: job.name })
 
     const { filePath, merchantId } = job.data as {
       filePath: string
@@ -66,7 +67,7 @@ const worker = new Worker(
           }
         })
       } catch (err) {
-        console.error('Failed to insert row', r, err)
+        logger.error('Failed to insert row', { row: r, error: err })
       }
     }
 
@@ -82,11 +83,11 @@ const worker = new Worker(
 )
 
 worker.on('completed', (job) =>
-  console.log('CSV job completed', job.id)
+  logger.info('CSV job completed', { id: job.id })
 )
 
 worker.on('failed', (job, err) =>
-  console.error('CSV job failed', job?.id, err)
+  logger.error('CSV job failed', { id: job?.id, error: err })
 )
 
-console.log('Worker started for queue', queueName)
+logger.info('Worker started for queue', { queue: queueName })

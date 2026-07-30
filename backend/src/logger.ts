@@ -1,35 +1,15 @@
-import { createLogger, format, transports } from 'winston';
-import 'winston-daily-rotate-file';
+import winston from 'winston';
 
-const { combine, timestamp, printf, colorize, errors } = format;
+const { combine, timestamp, printf, colorize, json } = winston.format;
 
-const myFormat = printf(({ level, message, timestamp, stack }) => {
-  return `${timestamp} ${level}: ${stack || message}`;
+const devFormat = printf(({ level, message, timestamp }) => {
+  return `${timestamp} ${level}: ${message}`;
 });
 
-export const logger = createLogger({
-  level: process.env.LOG_LEVEL || 'info',
-  format: combine(
-    errors({ stack: true }),
-    timestamp(),
-    myFormat
-  ),
-  transports: [
-    new transports.Console({ format: combine(colorize(), myFormat) }),
-    new transports.DailyRotateFile({
-      filename: 'logs/application-%DATE%.log',
-      datePattern: 'YYYY-MM-DD',
-      maxFiles: '14d',
-      zippedArchive: true,
-      level: 'info',
-    }),
-    new transports.DailyRotateFile({
-      filename: 'logs/error-%DATE%.log',
-      datePattern: 'YYYY-MM-DD',
-      maxFiles: '30d',
-      zippedArchive: true,
-      level: 'error',
-    }),
-  ],
-  exitOnError: false,
+const logger = winston.createLogger({
+  level: process.env.LOG_LEVEL || (process.env.NODE_ENV === 'production' ? 'info' : 'debug'),
+  format: process.env.NODE_ENV === 'production' ? combine(timestamp(), json()) : combine(colorize(), timestamp(), devFormat),
+  transports: [new winston.transports.Console()],
 });
+
+export default logger;

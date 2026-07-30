@@ -1,6 +1,7 @@
 import { io } from "./app";
 import { prisma } from "./prisma";
 import { orderService } from "./services/orderService";
+import logger from "./logger";
 
 interface RiderLocation {
   riderId: string;
@@ -15,7 +16,7 @@ const RIDER_ROOM = (id: string) => `rider:${id}`;
 const DISPATCH_ROOM = "dashboard";
 
 io.on("connection", (socket) => {
-  console.log("🔌 Client connected:", socket.id);
+  logger.info(`🔌 Client connected: ${socket.id}`);
 
   // =====================
   // JOIN ROOMS
@@ -29,13 +30,13 @@ io.on("connection", (socket) => {
         socket.join(RIDER_ROOM(data.riderId));
         socket.data.riderId = data.riderId;
 
-        console.log(`🚴 Rider joined: ${data.riderId}`);
+        logger.info(`🚴 Rider joined: ${data.riderId}`);
       }
 
       if (data.role === "DISPATCHER") {
         socket.join(DISPATCH_ROOM);
 
-        console.log("📦 Dispatcher joined dashboard");
+        logger.info("📦 Dispatcher joined dashboard");
       }
     }
   );
@@ -99,9 +100,9 @@ io.on("connection", (socket) => {
         }
       );
 
-      console.log("📍 Rider location:", payload);
+      logger.debug("📍 Rider location:" + JSON.stringify(payload));
     } catch (error) {
-      console.error("Location update error:", error);
+      logger.error("Location update error:", error);
     }
   });
 
@@ -126,9 +127,9 @@ io.on("connection", (socket) => {
         io.to(RIDER_ROOM(data.riderId)).emit("order:assigned", { order });
         io.to(DISPATCH_ROOM).emit("order:assigned", { order });
 
-        console.log("📦 Order assigned:", data);
+        logger.info("📦 Order assigned:" + JSON.stringify(data));
       } catch (error: any) {
-        console.error("Order assignment error:", error);
+        logger.error("Order assignment error:", error);
         socket.emit("order:assign:error", { message: error?.message || "Failed to assign order" });
       }
     }
@@ -154,9 +155,9 @@ io.on("connection", (socket) => {
 
         io.to(DISPATCH_ROOM).emit("order:status:update", { order });
 
-        console.log("📊 Order status:", data);
+        logger.info("📊 Order status:" + JSON.stringify(data));
       } catch (error: any) {
-        console.error("Order status error:", error);
+        logger.error("Order status error:", error);
         socket.emit("order:status:error", { message: error?.message || "Failed to update order status" });
       }
     }
@@ -166,6 +167,6 @@ io.on("connection", (socket) => {
   // DISCONNECT
   // =====================
   socket.on("disconnect", () => {
-    console.log("❌ Client disconnected:", socket.id);
+    logger.info(`❌ Client disconnected: ${socket.id}`);
   });
 });
