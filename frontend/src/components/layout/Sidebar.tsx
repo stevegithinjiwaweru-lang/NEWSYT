@@ -6,23 +6,38 @@ const Sidebar: React.FC = () => {
     <aside className="sidebar" role="navigation" aria-label="Main navigation">
       <div>
         <div className="brand">
-          <img src="/logo192.png" alt="NEWSYT logo" />
-          <div className="title">NEWSYT</div>
+          <img src="/logo192.png" alt="Easybox logo" />
+          <div className="title">Easybox</div>
         </div>
 
-        <nav className="nav">
-          <NavLink to="/" className={({ isActive }) => (isActive ? "active" : "")}>
+        <nav className="nav" aria-label="Primary">
+          <NavLink to="/dashboard" className={({ isActive }) => (isActive ? "active" : "")}>
             Dashboard
           </NavLink>
           <NavLink to="/orders" className={({ isActive }) => (isActive ? "active" : "")}>Orders</NavLink>
+          <NavLink to="/dispatch" className={({ isActive }) => (isActive ? "active" : "")}>Dispatch</NavLink>
           <NavLink to="/riders" className={({ isActive }) => (isActive ? "active" : "")}>Riders</NavLink>
+          <NavLink to="/tracking" className={({ isActive }) => (isActive ? "active" : "")}>Tracking</NavLink>
+          <NavLink to="/merchants" className={({ isActive }) => (isActive ? "active" : "")}>Customers</NavLink>
           <NavLink to="/reports" className={({ isActive }) => (isActive ? "active" : "")}>Reports</NavLink>
           <NavLink to="/settings" className={({ isActive }) => (isActive ? "active" : "")}>Settings</NavLink>
         </nav>
       </div>
 
       <div>
-        <a className="logout" href="#" onClick={(e) => { e.preventDefault(); localStorage.removeItem('accessToken'); localStorage.removeItem('refreshToken'); localStorage.removeItem('user'); window.location.href = '/login'; }}>Logout</a>
+        <a
+          className="logout"
+          href="#"
+          onClick={(e) => {
+            e.preventDefault();
+            localStorage.removeItem("accessToken");
+            localStorage.removeItem("refreshToken");
+            localStorage.removeItem("user");
+            window.location.href = "/login";
+          }}
+        >
+          Logout
+        </a>
       </div>
     </aside>
   );
