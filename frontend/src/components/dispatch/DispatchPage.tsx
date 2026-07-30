@@ -3,10 +3,11 @@ import { Row, Col, Card, Spin, Empty, Table, Tag, Button, message } from "antd";
 import DispatchFilters from "./DispatchFilters";
 import AssignRiderModal from "./AssignRiderModal";
 import DispatchToolbar from "./DispatchToolbar";
+import CreateOrderModal from "./CreateOrderModal";
+import CreateRiderModal from "./CreateRiderModal";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
-import { fetchPendingDispatchOrders, fetchRiders, assignOrder } from "../../services/dispatch.service";
+import { fetchPendingDispatchOrders } from "../../services/dispatch.service";
 import { getSocket } from "../../services/socket";
-import { runInBatches } from "../../utils/batchApi";
 import "./dispatch.css";
 
 const DispatchPage: React.FC = () => {
@@ -15,6 +16,8 @@ const DispatchPage: React.FC = () => {
   const [selectedRowKeys, setSelectedRowKeys] = useState<string[]>([]);
   const [assignModalOpen, setAssignModalOpen] = useState(false);
   const [assignTargetOrder, setAssignTargetOrder] = useState<string | null>(null);
+  const [createOrderOpen, setCreateOrderOpen] = useState(false);
+  const [createRiderOpen, setCreateRiderOpen] = useState(false);
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: ["dispatchOrders", filters],
@@ -25,14 +28,16 @@ const DispatchPage: React.FC = () => {
   useEffect(() => {
     const socket = getSocket();
     if (!socket) return;
-    const onAssigned = (payload: any) => {
-      // If an order was assigned, refetch
+
+    const onAssigned = () => {
       queryClient.invalidateQueries(["dispatchOrders"]);
       queryClient.invalidateQueries(["orders"]);
     };
+
     socket.on("order:assigned", onAssigned);
     socket.on("order:unassigned", onAssigned);
     socket.on("order:status:update", onAssigned);
+
     return () => {
       socket.off("order:assigned", onAssigned);
       socket.off("order:unassigned", onAssigned);
@@ -89,7 +94,7 @@ const DispatchPage: React.FC = () => {
         </Col>
         <Col span={8}>
           <Card>
-            <DispatchToolbar selectedCount={selectedRowKeys.length} onBulkAssign={handleBulkAssign} onRefresh={() => refetch()} />
+            <DispatchToolbar selectedCount={selectedRowKeys.length} onBulkAssign={handleBulkAssign} onRefresh={() => refetch()} onCreateOrder={() => setCreateOrderOpen(true)} onCreateRider={() => setCreateRiderOpen(true)} />
           </Card>
         </Col>
       </Row>
@@ -122,12 +127,15 @@ const DispatchPage: React.FC = () => {
         selectedOrderIds={selectedRowKeys}
         onClose={() => { setAssignModalOpen(false); setAssignTargetOrder(null); setSelectedRowKeys([]); }}
         onAssigned={() => {
-          // optimistic: invalidate lists
+          // invalidate lists
           queryClient.invalidateQueries(["dispatchOrders"]);
           queryClient.invalidateQueries(["orders"]);
           message.success("Assignment complete");
         }}
       />
+
+      <CreateOrderModal open={createOrderOpen} onClose={() => setCreateOrderOpen(false)} />
+      <CreateRiderModal open={createRiderOpen} onClose={() => setCreateRiderOpen(false)} />
     </div>
   );
 };
